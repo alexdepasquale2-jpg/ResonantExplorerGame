@@ -434,6 +434,8 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   font-size: 9px; letter-spacing: .2em; font-weight: 700;
   color: var(--accent);
   transition: color .3s;
+  pointer-events: auto;
+  width: max-content;
 }
 
 #body-bar {
@@ -6243,7 +6245,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       const surf = scene.surface || {};
       const water = surf.sea != null ? surf.sea : RS.planet.seaLevel(p);
       const submerged = surf.elev != null && surf.elev < water;
-      let slope = 0;
+      let slope = 0, fallEast = 0, fallNorth = 0;
       if (game.inhabiting && game.body) {
         const heading = game.body.heading;
         const step = 0.005;
@@ -6253,6 +6255,12 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
           scene.lon + Math.cos(heading) * step / clat,
           scene.lat + Math.sin(heading) * step);
         slope = e1 - e0;
+        /* Fall line is the negative gradient, independent of heading, so a
+         * body on ice slides downhill even when τ is centred. */
+        const eE = RS.planet.elevationDetailAt(p, scene.lon + step / clat, scene.lat);
+        const eN = RS.planet.elevationDetailAt(p, scene.lon, scene.lat + step);
+        fallEast = e0 - eE;
+        fallNorth = e0 - eN;
       }
       const biomeId = surf.biome && surf.biome.id;
       return {
@@ -6263,6 +6271,8 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
         flux: p.flux,
         roughness: clamp01(p.tectonics * 0.8 + p.cratering * 0.5 + Math.abs(slope) * 2),
         slope,
+        fallEast,
+        fallNorth,
         biomeId,
         hasMinds: !!(p.biosphere && p.biosphere.complexity > 0.5),
         label: p.name
@@ -6528,6 +6538,16 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     if (onPlanetSurface && env.slope > 0) {
       const hill = 1 / (1 + env.slope * 5);
       ax *= hill; az *= hill;
+    }
+    /* Downhill is a fall line. Uphill already taxes thrust; without this,
+     * ice and grass feel the same the moment you stop walking. */
+    if (onPlanetSurface && body.y >= -0.05) {
+      const slip = env.biomeId === 'ice' ? 1.8
+        : (env.biomeId === 'desert' || env.biomeId === 'dunes') ? 0.25
+        : 0.55;
+      const fall = env.gravity * 2.4 * slip;
+      ax += (env.fallEast || 0) * fall;
+      az += (env.fallNorth || 0) * fall;
     }
 
     // --- drag / friction --------------------------------------------------
@@ -7641,6 +7661,9 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       /* Currently highlighted star, and the one committed to as a target. */
       hover: -1,
       target: null,
+      /* Fractional sector offset of an inhabited courier. Crossing ±0.5
+       * steps sx/sy — an address change, not a stored path. Ephemeral. */
+      driftX: 0, driftY: 0,
       /* Slow parallax drift so the map is never completely still. */
       t: 0
     };
@@ -7772,11 +7795,63 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     if (!res.ok) return res;
     game.galaxy.sx = st.sx;
     game.galaxy.sy = st.sy;
+    game.galaxy.driftX = 0;
+    game.galaxy.driftY = 0;
     game.galaxy.cacheKey = '';
     game.stats.jumps = (game.stats.jumps || 0) + 1;
     RS.scenes.enterSystem(game, bus, { sx: st.sx, sy: st.sy, index: st.index });
     bus.emit('galaxy:travel', { star: st });
     return { ok: true };
+  }
+
+  /* A courier's vacuum velocity accumulates a fractional sector. Crossing
+   * ±0.5 steps the integer address and wraps the fraction, so the map
+   * recentres and the glyph stays continuous. Reach is the same gate as a
+   * tap-travel hop: one sector from here, not a stored trail home. */
+  function stepSector(game, bus) {
+    const G = game.galaxy;
+    const body = game.body;
+    const reach = RS.influence.reachRadius(game);
+    for (let n = 0; n < 4; n++) {
+      const ax = Math.abs(G.driftX || 0);
+      const ay = Math.abs(G.driftY || 0);
+      if (ax < 0.5 && ay < 0.5) break;
+      let dx = 0, dy = 0;
+      if (ax >= ay) dx = G.driftX > 0 ? 1 : -1;
+      else dy = G.driftY > 0 ? 1 : -1;
+      const here = { sx: G.sx, sy: G.sy, jx: 0, jy: 0 };
+      const next = { sx: G.sx + dx, sy: G.sy + dy, jx: 0, jy: 0 };
+      if (distanceLy(here, next) > reach * LY_PER_SECTOR) {
+        /* Soft wall at the field edge. A one-sector orthogonal hop is always
+         * inside the minimum field; this is the diagonal, and any future
+         * multi-sector shove. */
+        if (dx) { G.driftX = clamp(G.driftX, -0.49, 0.49); if (body) body.vx *= 0.35; }
+        if (dy) { G.driftY = clamp(G.driftY, -0.49, 0.49); if (body) body.vy *= 0.35; }
+        break;
+      }
+      G.sx += dx;
+      G.sy += dy;
+      if (dx) G.driftX -= dx;
+      if (dy) G.driftY -= dy;
+      G.cacheKey = '';
+      refresh(game);
+      /* Name the nearest resolved star in this cell without entering it.
+       * Descending is still Σ. */
+      const snapped = nearestInCell(G, G.sx, G.sy);
+      if (snapped && snapped.inReach) G.target = snapped;
+      if (bus && bus.emit) bus.emit('galaxy:drift', { sx: G.sx, sy: G.sy, star: snapped || null });
+    }
+  }
+
+  function nearestInCell(G, sx, sy) {
+    let best = null, bd = Infinity;
+    for (let i = 0; i < G.stars.length; i++) {
+      const st = G.stars[i];
+      if (st.sx !== sx || st.sy !== sy) continue;
+      const d = Math.hypot(st.jx || 0, st.jy || 0);
+      if (d < bd) { bd = d; best = st; }
+    }
+    return best;
   }
 
   function tick(game, bus, dt) {
@@ -7785,8 +7860,9 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     if (game.inhabiting && game.body) {
       const G = game.galaxy;
       const body = game.body;
-      G.driftX = clamp((G.driftX || 0) + body.vx * dt * 0.18, -0.45, 0.45);
-      G.driftY = clamp((G.driftY || 0) + body.vy * dt * 0.18, -0.45, 0.45);
+      G.driftX = (G.driftX || 0) + body.vx * dt * 0.18;
+      G.driftY = (G.driftY || 0) + body.vy * dt * 0.18;
+      stepSector(game, bus);
       body.x = G.driftX;
       body.y = G.driftY;
     }
@@ -7994,7 +8070,8 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 
   RS.galaxy = {
     LY_PER_SECTOR, WINDOW, newState, starsIn, distanceLy, refresh,
-    surveyOf, clearSurveys, selectStar, travelTo, tick, draw, pick
+    surveyOf, clearSurveys, selectStar, travelTo, tick, draw, pick,
+    stepSector
   };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));
 
@@ -8252,13 +8329,13 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     const h = planet.hash;
     const out = [];
     const seen = Object.create(null);
-    const samples = 10 + civ.tier.reach * 6;
-    for (let i = 0; i < samples && out.length < 5; i++) {
+    const samples = 18 + civ.tier.reach * 10;
+    for (let i = 0; i < samples && out.length < 8; i++) {
       const ang = hashF(h, 210 + i) * Math.PI * 2;
       const rad = 0.15 + hashF(h, 310 + i) * R;
       const sx = Math.round(addr.sx + Math.cos(ang) * rad);
       const sy = Math.round(addr.sy + Math.sin(ang) * rad);
-      const ix = hashN(h, 410 + i) % 3;
+      const ix = hashN(h, 410 + i) % 5;
       const key = sx + ',' + sy + ',' + ix;
       if (seen[key]) continue;
       seen[key] = true;
@@ -8967,13 +9044,18 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 
     if (embodied) {
       const m = arch.dialMap;
+      const ridingCiv = !!(game.body && game.body.ridingCiv);
       return [
         { sym: 'τ', hue: 43, name: 'Time', does: m.time,
           now: D.time.value.toFixed(2) + '×',
-          note: 'While you have a body, τ is your throttle. Negative reverses.' },
+          note: ridingCiv
+            ? 'τ leans on this culture\'s trajectory. You influence; you do not command.'
+            : 'While you have a body, τ is your throttle. Negative reverses.' },
         { sym: 'Σ', hue: 338, name: 'Space', does: m.space,
           now: (clamp01((D.space.value - D.space.min) / Math.max(1e-6, D.space.max - D.space.min)) * 100).toFixed(0) + '%',
-          note: 'Your vertical axis in this body — it does not move the scale ladder while embodied.' },
+          note: ridingCiv
+            ? 'Depth of hold on the civilisation — the same axis as riding a creature, one scale up.'
+            : 'Your vertical axis in this body — it does not move the scale ladder while embodied.' },
         { sym: 'Δ', hue: 268, name: 'Phase', does: m.phase,
           now: (D.phase.value * 57.3).toFixed(0) + '°',
           note: 'A closed circle, which is exactly what a heading is.' },
@@ -9026,6 +9108,17 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       '<div>Scale <b>' + RS.cosmos.tierAt(D.space.value).name + '</b></div>' +
       '<div>Next <b>' + RS.game.sceneObjective(game).text.slice(0, 46) + '</b></div>' +
       '</div></section>';
+
+    if (game.inhabiting && sc.kind === 'planet') {
+      h += '<section><h3>Two cameras, one sphere</h3>' +
+        '<p class="blurb">Near the ground is the side-on slice. Climb, tap the scene tag, ' +
+        'or press <b>C</b> for the neighbourhood map. Pose is shared — switching never teleports.</p></section>';
+    }
+    if (game.inhabiting && RS.vessel.archOf(game.body).id === 'symbiont') {
+      h += '<section><h3>Riding a mind</h3>' +
+        '<p class="blurb">On the surface that is a creature. In orbit, with a civilisation selected, ' +
+        'it is the culture itself — same body, one scale up. τ leans; you do not command.</p></section>';
+    }
 
     // ── the dials, as they mean things right now ──
     h += '<section><h3>Your four dials <em>' +
@@ -9252,6 +9345,12 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   }
 
   function nextReach(game) {
+    if (game.inhabiting && game.body && game.body.archId === 'symbiont' && !game.body.ridingCiv) {
+      const env = RS.vessel.environmentFor(game);
+      if (env.hasMinds && env.medium === RS.vessel.MEDIUM.ORBIT) {
+        return 'A selected civilisation is a mind at this scale. Stay in the symbiont and lean with τ.';
+      }
+    }
     const open = RS.influence.RESEARCH.filter(n => RS.influence.researchAvailable(game, n));
     if (open.length) {
       const cheap = open.reduce((a, b) => (a.cost < b.cost ? a : b));
@@ -9383,6 +9482,14 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   }
 
   function nextContact(game) {
+    if (game.inhabiting && game.body && game.body.archId === 'symbiont') {
+      const env = RS.vessel.environmentFor(game);
+      if (env.hasMinds && env.medium === RS.vessel.MEDIUM.ORBIT) {
+        return game.body.ridingCiv
+          ? 'You are riding this culture. τ leans on their trajectory — they do not become a creature.'
+          : 'A civilisation is a mind at this scale. Stay in the symbiont; τ leans, you do not command.';
+      }
+    }
     const met = RS.contact.totalMet(game);
     const c = game.scene.contact;
     if (c) {
@@ -11101,6 +11208,8 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
         game.galaxy.sx = s.systemAddr.sx;
         game.galaxy.sy = s.systemAddr.sy;
       }
+      game.galaxy.driftX = 0;
+      game.galaxy.driftY = 0;
       game.galaxy.cacheKey = '';
       RS.galaxy.refresh(game);
     } else if (kind === 'system') {
@@ -11395,6 +11504,30 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     if (!game.inhabiting) return 'globe';
     if (s.altitude > 0.22) return 'freeroam';
     return 'sideon';
+  }
+
+  /* Player-facing cycle: AUTO → SIDE-ON → MAP → AUTO.
+   * Globe stays an observing / debug mode, not a walk cycle. */
+  function cycleCamera(game) {
+    const s = game.scene;
+    if (!s || s.kind !== 'planet' || !game.inhabiting) {
+      return { ok: false, reason: 'not piloting a planet' };
+    }
+    if (s.forceCam == null) s.forceCam = 'sideon';
+    else if (s.forceCam === 'sideon') s.forceCam = 'freeroam';
+    else s.forceCam = null;
+    return { ok: true, forceCam: s.forceCam, mode: cameraMode(game) };
+  }
+
+  function cameraLabel(game) {
+    const s = game.scene;
+    if (!s || s.kind !== 'planet' || !game.inhabiting) {
+      return game.inhabiting ? 'PILOTING' : 'OBSERVING';
+    }
+    if (s.forceCam === 'freeroam') return 'MAP';
+    if (s.forceCam === 'sideon') return 'SIDE-ON';
+    if (s.forceCam === 'globe') return 'GLOBE';
+    return 'AUTO';
   }
 
   function tickPlanet(game, bus, dt) {
@@ -11706,7 +11839,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     TIER_PLANET, TIER_STELLAR, TIER_SYSTEM, TIER_CELL, TIER_QUANTUM, TIER_GROUP, TIER_HUBBLE, TIER_ENSEMBLE, TIER_ATOMIC, TIER_MOLECULAR,
     SCENES, SCENE_BY_ID, sceneForTier, tierForScene, newScene, systemAddrFrom, systemKey, enterSystem, selectBody,
     derivePlanet, mostInteresting, tick, systemPositions, terrainProfile,
-    neighbourhood, cameraMode, sampleSurface, embark, disembark, extract, sell, PROFILE_N,
+    neighbourhood, cameraMode, cycleCamera, cameraLabel, sampleSurface, embark, disembark, extract, sell, PROFILE_N,
     FREE_W, FREE_H,
     TIER_CLUSTER, civAt, tickContact, wrapDeltaLon
   };
@@ -12042,14 +12175,22 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       }
       const p = s.planet;
       if (p && p.biosphere && p.biosphere.complexity > 0.34) {
-        return { text: 'Life here. Ride a mind with the symbiont, or turn Σ inward to enter a cell.',
+        if (st && st.ridingCiv) {
+          return { text: 'Riding this culture. τ leans on their trajectory — they do not become a creature.',
+            kind: 'explore' };
+        }
+        if (st && st.arch && st.arch.id === 'symbiont') {
+          return { text: 'The symbiont rides a mind here, or a civilisation from orbit. Tap the scene tag or C to change camera.',
+            kind: 'explore' };
+        }
+        return { text: 'Life here. Ride a mind with the symbiont — in orbit that is a civilisation — or turn Σ inward to enter a cell.',
           kind: 'explore' };
       }
       if (p && p.resources && p.resources.length) {
         return { text: 'Seams below. Extract with the harvester, or build from the world panel.',
           kind: 'explore' };
       }
-      return { text: 'Walk it. Δ steers, and φ changes what you can sense.', kind: 'pilot' };
+      return { text: 'Walk it. Δ steers, φ senses. Tap the scene tag or C to switch SIDE-ON / MAP.', kind: 'pilot' };
     }
     return nextObjective(game);
   }
@@ -13380,9 +13521,9 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     return { canvas: world, ctx: wctx };
   }
 
-  function captureWorld(w, h, threshold) {
+  function captureWorld(w, h, threshold, stride) {
     if (!enabled || !world) return;
-    capture(world, w, h, threshold);
+    capture(world, w, h, threshold, stride);
   }
 
   function blit(ctx, w, h) {
@@ -13390,11 +13531,14 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     ctx.drawImage(world, 0, 0, ww, wh, 0, 0, w, h);
   }
 
-  /* Called on a finished source. Reads that image into the bloom buffer. */
-  function capture(canvas, w, h, threshold) {
+  /* Called on a finished source. Reads that image into the bloom buffer.
+   * `stride` skips frames; the attunement field passes 3 because that scope
+   * is the dearest post in the game and bloom is low-frequency there. */
+  function capture(canvas, w, h, threshold, stride) {
     if (!enabled) return;
     if (!ensure(w, h)) return;
-    if (valid && (frame++ % STRIDE) !== 0) return;
+    const skip = stride == null ? STRIDE : Math.max(1, stride | 0);
+    if (valid && (frame++ % skip) !== 0) return;
     frame = 1;
     const t = threshold == null ? 0.42 : threshold;
 
@@ -14424,7 +14568,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
    * needs a lower bar or nothing bleeds at all.
    */
   const BLOOM = {
-    field:     { amt: 0.85, thr: 0.34 },
+    field:     { amt: 0.85, thr: 0.34, stride: 3 },
     foam:      { amt: 1.15, thr: 0.30 },
     shells:    { amt: 0.95, thr: 0.34 },
     molecular: { amt: 0.75, thr: 0.38 },
@@ -14668,7 +14812,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       const tr = game.scene ? game.scene.transition : 0;
       const amt = b.amt * (1 + tr * 1.4) * (game.settings.reduceMotion ? 0.6 : 1);
       if (worldBuf) {
-        RS.bloom.captureWorld(view.w, view.h, b.thr * (1 - tr * 0.35));
+        RS.bloom.captureWorld(view.w, view.h, b.thr * (1 - tr * 0.35), b.stride);
         displayCtx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
         displayCtx.clearRect(0, 0, view.w, view.h);
         RS.bloom.blit(displayCtx, view.w, view.h);
@@ -16110,13 +16254,18 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
           const idx = pickBody(game, a.startX, a.startY);
           if (idx >= 0 && handlers && handlers.onPickBody) handlers.onPickBody(idx);
         } else if (scene.kind === 'planet') {
-          /* Tapping the globe picks a latitude to descend to. */
+          /* Tapping the globe picks a latitude to descend to. Embodied, the
+           * same tap cycles SIDE-ON / MAP / AUTO — altitude still switches
+           * when the tag reads AUTO. */
           if (!game.inhabiting) {
             const V = RS.render.view;
             const dy = (a.startY - V.cy) / (V.R * 0.62);
             scene.lat = clamp(-Math.asin(clamp(dy, -1, 1)), -1.5, 1.5);
             RS.scenes.sampleSurface(game);
             bus.emit('scene:aim', { lat: scene.lat });
+          } else if (RS.scenes.cycleCamera) {
+            const r = RS.scenes.cycleCamera(game);
+            if (r.ok) bus.emit('scene:camera', { forceCam: r.forceCam, mode: r.mode });
           }
         } else {
           const hit = pickNode(game, a.startX, a.startY);
@@ -16168,6 +16317,14 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       }
       const ids = ['time', 'space', 'phase', 'frequency'];
       if (e.key === 'Tab') { kbIndex = (kbIndex + 1) % 4; e.preventDefault(); bus.emit('dial:jump', { dial: game.dials[ids[kbIndex]] }); return; }
+      if (e.key === 'c' || e.key === 'C') {
+        if (game.inhabiting && game.scene && game.scene.kind === 'planet' && RS.scenes.cycleCamera) {
+          e.preventDefault();
+          const r = RS.scenes.cycleCamera(game);
+          if (r.ok) bus.emit('scene:camera', { forceCam: r.forceCam, mode: r.mode });
+        }
+        return;
+      }
       const dial = game.dials[ids[kbIndex]];
       let d = 0;
       if (e.key === 'ArrowRight' || e.key === 'ArrowUp') d = 1;
@@ -16293,6 +16450,15 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     el['btn-menu'].addEventListener('click', () => toggleDrawer(game, bus, drawerOpen ? null : lastTab));
     el['btn-contact'].addEventListener('click', () => toggleDrawer(game, bus, 'contact'));
     el['btn-drawer-close'].addEventListener('click', () => closeDrawer());
+
+    /* Scene tag is the player-facing camera cycle while piloting a planet. */
+    if (el['scene-tag']) {
+      el['scene-tag'].addEventListener('click', () => {
+        if (!game.inhabiting || !game.scene || game.scene.kind !== 'planet') return;
+        const r = RS.scenes.cycleCamera(game);
+        if (r.ok) bus.emit('scene:camera', { forceCam: r.forceCam, mode: r.mode });
+      });
+    }
 
     el['drawer-tabs'].addEventListener('click', ev => {
       const t = ev.target.closest('[data-tab]');
@@ -16549,9 +16715,16 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
      * which mode the dials are in, because that is the one thing they must
      * never be wrong about. */
     const s = game.scene;
-    const modeLabel = game.inhabiting ? 'PILOTING' : 'OBSERVING';
+    const modeLabel = RS.scenes.cameraLabel ? RS.scenes.cameraLabel(game)
+      : (game.inhabiting ? 'PILOTING' : 'OBSERVING');
     setText('scene-tag', s.kind.toUpperCase() + ' · ' + modeLabel);
     el['scene-tag'].style.color = game.inhabiting ? '#fca5a5' : '#7dd3fc';
+    if (el['scene-tag']) {
+      el['scene-tag'].title = (s.kind === 'planet' && game.inhabiting)
+        ? 'Tap or press C to cycle SIDE-ON / MAP / AUTO'
+        : '';
+      el['scene-tag'].style.cursor = (s.kind === 'planet' && game.inhabiting) ? 'pointer' : 'default';
+    }
 
     renderBodyBar(game);
     renderContactHint(game);
