@@ -4107,6 +4107,7 @@ const posOut = { x: 0, y: 0, z: 0, r: 0 };
   const html = RS.debug.panelHTML(g);
   assert(html.indexOf('data-dbg="unlock-all"') >= 0, 'panelHTML includes unlock-all');
   assert(html.indexOf('data-dbg="jump"') >= 0, 'panelHTML includes scene jumps');
+  assert(html.indexOf('data-dbg="planet-play"') >= 0, 'panelHTML includes quick-test shortcuts');
   assert(html.indexOf('DEV') >= 0, 'panelHTML marks itself as DEV');
 
   /* Unlocks must survive a save round-trip (same path the game uses). */
@@ -4117,6 +4118,24 @@ const posOut = { x: 0, y: 0, z: 0, r: 0 };
     'debug unlocks round-trip through save (bands)');
   assert(RS.strike.UPGRADES.every(u => RS.strike.levelOf(round, u.id) === u.max),
     'debug unlocks round-trip through save (strike)');
+
+  RS.debug.fillGnosis(g, 8);
+  assert(RS.fractal.ESSENCES.every(e => RS.fractal.attuneLevel(g, e.id) >= 4),
+    'fillGnosis reaches attunement 4 on every essence');
+
+  const play = RS.debug.planetPlayground(g, nullBus);
+  assert(play.ok && g.scene.kind === 'planet', 'planetPlayground lands on a world');
+  assert(g.inhabiting, 'planetPlayground embarks a working body');
+
+  RS.debug.skipTime(g, 600);
+  assert((g.stats.playSeconds || 0) >= 600, 'skipTime advances playSeconds');
+
+  const seed = RS.debug.forceOpenSeed(g, nullBus);
+  assert(seed.ok && g.seed !== 4242, 'forceOpenSeed rolls a new universe');
+
+  sandbox.localStorage.setItem('resonantDebug', '1');
+  assert(RS.debug.persistDebug(false).ok, 'persistDebug can clear the gate flag');
+  sandbox.localStorage.removeItem('resonantDebug');
 }
 
 // ── vessel open-world: geology, dual cameras, other scopes ───────────────

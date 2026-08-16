@@ -251,6 +251,99 @@
     return { ok: true, forceCam: mode };
   }
 
+  function persistDebug(on) {
+    try {
+      if (typeof localStorage === 'undefined') return { ok: false, reason: 'no storage' };
+      if (on) localStorage.setItem('resonantDebug', '1');
+      else localStorage.removeItem('resonantDebug');
+      return { ok: true, persist: !!on };
+    } catch (_) {
+      return { ok: false, reason: 'storage blocked' };
+    }
+  }
+
+  function skipTime(game, seconds) {
+    const n = Math.max(0, +seconds || 0);
+    game.stats.playSeconds = (game.stats.playSeconds || 0) + n;
+    return { ok: true, playSeconds: game.stats.playSeconds };
+  }
+
+  function leaveBody(game, bus) {
+    if (!game.inhabiting) return { ok: false, reason: 'not embodied' };
+    RS.scenes.disembark(game, bus || { emit() {} });
+    return { ok: true };
+  }
+
+  function takeBody(game, bus, archId) {
+    const busSafe = bus || { emit() {} };
+    if (archId === '_off') return leaveBody(game, busSafe);
+    return RS.scenes.embark(game, busSafe, archId);
+  }
+
+  function takeBestBody(game, bus) {
+    const best = RS.vessel.bestHere(game);
+    if (!best) return { ok: false, reason: 'no vessel works here' };
+    return takeBody(game, bus, best.id);
+  }
+
+  function planetPlayground(game, bus) {
+    const busSafe = bus || { emit() {} };
+    jumpScene(game, busSafe, 'planet');
+    presetMid(game, busSafe);
+    const emb = takeBestBody(game, busSafe);
+    return { ok: true, embarked: emb.ok ? emb : null, kind: game.scene.kind };
+  }
+
+  function bumpFirstCrystal(game, bus) {
+    game.stats.crystals = Math.max(game.stats.crystals || 0, 1);
+    grantInsight(game, 120);
+    const gal = RS.cosmos.TIERS.find(t => t.id === 'galactic');
+    if (gal) game.known.tiers[gal.id] = true;
+    if (bus && bus.emit) bus.emit('debug:first-crystal', {});
+    return { ok: true, crystals: game.stats.crystals };
+  }
+
+  function fillGnosis(game, contexts) {
+    const want = Math.max(1, contexts | 0);
+    const nBand = RS.spectrum.BANDS.length;
+    const nTier = RS.cosmos.TIERS.length;
+    for (const ess of RS.fractal.ESSENCES) {
+      const list = game.gnosis[ess.id] || (game.gnosis[ess.id] = []);
+      let guard = want * 4;
+      for (let t = 0; t < nTier && list.length < want && guard-- > 0; t++) {
+        for (let b = 0; b < nBand && list.length < want && guard-- > 0; b++) {
+          const key = RS.fractal.contextKey(ess.id, t, b);
+          if (list.indexOf(key) < 0) list.push(key);
+        }
+      }
+    }
+    return { ok: true };
+  }
+
+  function maxSurveyHere(game) {
+    const s = game.scene;
+    if (!s || s.kind !== 'planet' || !s.planet) return { ok: false, reason: 'not on a planet' };
+    if (!game.surveys) game.surveys = Object.create(null);
+    const key = RS.influence.planetKey(s.planet);
+    game.surveys[key] = { work: 48, lastAt: game.stats.playSeconds || 0 };
+    return { ok: true, work: 48 };
+  }
+
+  function pinHunt(game, essenceId) {
+    if (!RS.game || !RS.game.pinHunt) return { ok: false, reason: 'no hunt' };
+    return RS.game.pinHunt(game, essenceId);
+  }
+
+  function forceOpenSeed(game, bus) {
+    if (!RS.game || !RS.game.openSeed) return { ok: false, reason: 'no seed' };
+    fillGnosis(game, 8);
+    if (!RS.game.canOpenSeed(game)) {
+      grantInsight(game, 50000);
+      unlockAll(game, bus);
+    }
+    return RS.game.openSeed(game, bus);
+  }
+
   const ACTIONS = {
     'insight-1k': (g) => grantInsight(g, 1000),
     'insight-100k': (g) => grantInsight(g, 100000),
@@ -270,7 +363,18 @@
     'save-now': (g) => forceSave(g),
     'save-wipe': () => wipeSave(),
     'save-dump': (g) => dumpSave(g),
-    'dump-underfoot': (g) => dumpUnderfoot(g)
+    'dump-underfoot': (g) => dumpUnderfoot(g),
+    'debug-on': () => persistDebug(true),
+    'debug-off': () => persistDebug(false),
+    'time-10m': (g) => skipTime(g, 600),
+    'time-1h': (g) => skipTime(g, 3600),
+    'first-crystal': (g, b) => bumpFirstCrystal(g, b),
+    'max-gnosis': (g) => fillGnosis(g, 8),
+    'open-seed': (g, b) => forceOpenSeed(g, b),
+    'planet-play': (g, b) => planetPlayground(g, b),
+    'disembark': (g, b) => leaveBody(g, b),
+    'embark-best': (g, b) => takeBestBody(g, b),
+    'survey-maxed': (g) => maxSurveyHere(g)
   };
 
   function run(game, bus, action, arg) {
@@ -279,6 +383,8 @@
     if (action === 'phi') return snapPhi(game, arg);
     if (action === 'teleport') return teleport(game, arg);
     if (action === 'cam') return setCam(game, arg);
+    if (action === 'embark') return takeBody(game, bus, arg);
+    if (action === 'pin-hunt') return pinHunt(game, arg);
     const fn = ACTIONS[action];
     if (!fn) return { ok: false, reason: 'unknown action' };
     return fn(game, bus);
@@ -346,6 +452,29 @@
       btn('save-dump', 'Dump JSON') +
       '</div></section>';
 
+    h += '<section><h4>Quick tests</h4><div class="dbg-row">' +
+      btn('planet-play', 'Planet + body') +
+      btn('first-crystal', '1st crystal') +
+      btn('embark-best', 'Best body') +
+      btn('disembark', 'Leave body') +
+      btn('survey-maxed', 'Survey maxed') +
+      btn('max-gnosis', 'Max gnosis') +
+      btn('open-seed', 'Open seed') +
+      btn('time-10m', '+10 min') +
+      btn('time-1h', '+1 hour') +
+      '</div></section>';
+
+    h += '<section><h4>Bodies</h4><div class="dbg-row">';
+    for (const a of RS.vessel.ARCHETYPES) {
+      if (a.id === 'mote') continue;
+      h += btn('embark', a.name.slice(0, 5), a.id);
+    }
+    h += btn('disembark', 'Off', '_off') + '</div></section>';
+
+    h += '<section><h4>Hunt pin</h4><div class="dbg-row">';
+    for (const e of RS.fractal.ESSENCES) h += btn('pin-hunt', e.glyph + ' ' + e.name.slice(0, 4), e.id);
+    h += '</div></section>';
+
     h += '<section><h4>Planet</h4><div class="dbg-row">' +
       btn('teleport', 'Eq 0,0', '0,0') +
       btn('teleport', 'N pole', '0,88') +
@@ -356,13 +485,19 @@
       btn('dump-underfoot', 'Dump underfoot') +
       '</div></section>';
 
-    h += '<p class="dbg-hint">Toggle with <kbd>`</kbd> · gated (localhost / ?debug=1 / localStorage)</p>';
+    h += '<section><h4>Gate</h4><div class="dbg-row">' +
+      btn('debug-on', 'Persist ON') +
+      btn('debug-off', 'Persist OFF') +
+      '</div></section>';
+
+    h += '<p class="dbg-hint">Topbar <kbd>⚙</kbd> or <kbd>`</kbd> · localhost / ?debug=1 / localStorage</p>';
     return h;
   }
 
   RS.debug = {
     enabled, run, panelHTML, statusLine, SCENE_JUMPS,
     grantInsight, maxDials, maxStrike, unlockAll, unlockAllResearch,
-    jumpScene, snapPhi, ensureReach, teleport, setCam, dumpUnderfoot
+    jumpScene, snapPhi, ensureReach, teleport, setCam, dumpUnderfoot,
+    persistDebug, skipTime, planetPlayground, fillGnosis, forceOpenSeed
   };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));

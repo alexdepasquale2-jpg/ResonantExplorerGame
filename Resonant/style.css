@@ -541,6 +541,22 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   border-color: currentColor;
   animation: contact-pulse 2.4s ease-in-out infinite;
 }
+
+/* Developer cheat panel — gated; shown only when RS.debug.enabled(). */
+#btn-debug[hidden] { display: none; }
+#btn-debug {
+  display: grid;
+  font-size: 12px;
+  letter-spacing: 0;
+  color: #facc15;
+  border-color: rgba(250, 204, 21, 0.35);
+}
+#btn-debug:hover { border-color: rgba(250, 204, 21, 0.55); color: #fde68a; }
+#btn-debug.live {
+  background: rgba(250, 204, 21, 0.14);
+  border-color: rgba(250, 204, 21, 0.65);
+  box-shadow: 0 0 0 1px rgba(250, 204, 21, 0.2);
+}
 @keyframes contact-pulse {
   0%, 100% { box-shadow: 0 0 0 0 currentColor; opacity: .85; }
   50% { box-shadow: 0 0 10px 0 currentColor; opacity: 1; }
