@@ -70,13 +70,27 @@
     });
 
     bus.on('node:crystallise', ({ node, amount, man, recognition }) => {
+      const first = game.stats.crystals === 1;
       RS.audio.crystal(man.bandIndex, man.rarity, man.potency);
-      RS.feel.FX.crystallise(node.x, node.y, man.hue, man.rarity, amount);
-      if (man.rarity >= 2) {
+      if (first) {
+        /* The first lock is the loudest event in the game. Later crystals
+         * stay quieter so this one remains the lesson. */
+        RS.audio.discover(1.5);
+        RS.feel.FX.discovery(man.hue, 1.35);
+        RS.feel.FX.crystallise(node.x, node.y, man.hue, Math.max(2, man.rarity), amount);
         RS.ui.toast({
-          kind: 'rare', icon: man.glyph, hue: man.hue, ms: 3000,
-          title: man.name, body: '★'.repeat(man.rarity) + ' · ' + RS.core.fmt(amount) + ' Ψ'
+          kind: 'major', icon: man.glyph, hue: man.hue, ms: 5200,
+          title: 'You just held a layer',
+          body: '+' + RS.core.fmt(amount) + ' Ψ. Swing wide of a knob for fine control.'
         });
+      } else {
+        RS.feel.FX.crystallise(node.x, node.y, man.hue, man.rarity, amount);
+        if (man.rarity >= 2) {
+          RS.ui.toast({
+            kind: 'rare', icon: man.glyph, hue: man.hue, ms: 3000,
+            title: man.name, body: '★'.repeat(man.rarity) + ' · ' + RS.core.fmt(amount) + ' Ψ'
+          });
+        }
       }
     });
 
@@ -203,10 +217,10 @@
             : 'Filaments and voids.' },
         ensemble: { hue: 210, icon: '∵',
           title: sc => 'level ' + (sc.ensemble ? sc.ensemble.family : 'I') + ' ensemble',
-          body: () => 'Alternative blocks of law. Turn Δ to stand in one — the constants change under you.' },
+          body: () => 'The same system, twice. Turn Δ to stand in other laws — leaving restores ours.' },
         foam: { hue: 291, icon: '∴',
           title: () => 'quantum foam',
-          body: () => 'Nothing persists at this scale, including you. Pairs borrow existence and pay it back.' },
+          body: () => 'Nothing persists here, including you. Find the pair that never cancelled — the bright, still one.' },
         molecular: { hue: 196, icon: '⌬',
           title: sc => sc.molecule && sc.molecule.bias > 0.5 ? 'homochiral chemistry' : 'racemic chemistry',
           body: sc => sc.molecule && sc.molecule.bias > 0.5
@@ -220,7 +234,7 @@
           body: sc => {
             const why = RS.cellular.reasonSterile(sc.planet);
             if (why) return 'Nothing to be inside here — ' + why + '.';
-            return 'Inside ' + sc.planet.name + '. What you crystallise here, it becomes.';
+            return 'Inside ' + sc.planet.name + '. Crystallise here and the world changes — you will see it from orbit.';
           } }
       };
       const a = ARRIVAL[kind] || ARRIVAL.field;
@@ -347,6 +361,15 @@
         body: 'τ ' + dm.time + ' · Σ ' + dm.space + ' · Δ ' + dm.phase +
           ' · φ ' + dm.frequency + '. Drag the world to shove.'
       });
+      if (game.scene.kind === 'planet' && !game.flags.cameraHint) {
+        game.flags.cameraHint = true;
+        RS.ui.toast({
+          kind: 'info', icon: 'C', hue: 200, ms: 4200,
+          title: 'Two cameras, one ground',
+          body: 'C switches SIDE-ON and MAP; the ground is the same. Tap the ground to survey.'
+        });
+        if (RS.ui.pulseSceneTag) RS.ui.pulseSceneTag();
+      }
     });
 
     bus.on('vessel:disembark', ({ arch }) => {
@@ -404,16 +427,17 @@
         title: 'Extracted ' + RS.core.fmt(amount) + ' ' + (c ? c.name : id) });
     });
 
-    bus.on('place:pulse', ({ amount, first, extracted }) => {
+    bus.on('place:pulse', ({ amount, first, extracted, biome, seam }) => {
       RS.audio.click(0.4 + Math.min(0.5, amount / 12), 0.55);
       RS.feel.buzz('tick');
-      /* Frequent pulses stay a click. The first read of a world is the one
-       * that should name itself — after that, the number in the topbar pops. */
+      /* Frequent pulses stay a click. The first read of a world names the
+       * patch — biome and seam — so the tap is a survey, not a farm. */
       if (first && !extracted) {
+        const where = biome && biome.name ? biome.name : 'this patch';
         RS.ui.toast({
-          kind: 'info', icon: '◎', hue: 42, ms: 1800,
-          title: 'World read',
-          body: '+' + RS.core.fmt(amount) + ' Ψ from this patch'
+          kind: 'info', icon: '◎', hue: 42, ms: 2400,
+          title: where,
+          body: (seam ? seam + ' underfoot. ' : '') + '+' + RS.core.fmt(amount) + ' Ψ'
         });
       }
     });
@@ -462,6 +486,27 @@
     });
 
     // ── contact ──────────────────────────────────────────────────────────
+    bus.on('discover:civ', ({ star }) => {
+      RS.audio.discover(1.35);
+      RS.feel.FX.discovery(45, 1.2);
+      RS.ui.toast({
+        kind: 'major', icon: '◍', hue: 45, ms: 7000,
+        title: 'SOMEONE IS HERE — ' + star.name.toUpperCase(),
+        body: 'An amber ring. Civilisations are rare. Tap it, then turn Σ inward and tune to their carrier.'
+      });
+    });
+
+    bus.on('contact:warming', ({ planet, civ, stage }) => {
+      RS.audio.seat(0.25 + stage * 0.12);
+      RS.feel.vignette(0.22 + stage * 0.12);
+      RS.ui.toast({
+        kind: 'info', icon: '◉', hue: civ.disposition.hue, ms: 3200,
+        title: stage === 1 ? 'A stirring' : 'They are beginning to notice',
+        body: civ.name + ' on ' + planet.name +
+          (stage === 1 ? ' has not seen you yet.' : ' is warming toward awareness. Hold the carrier.')
+      });
+    });
+
     bus.on('contact:detected', ({ planet, civ }) => {
       /* They noticed you first. This is deliberately unsettling and it is the
        * only event in the game where something else acts on you. */

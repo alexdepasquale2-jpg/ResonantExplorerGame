@@ -204,32 +204,50 @@
 
   function spawnNode(game, field) {
     const tierIndex = clamp(Math.round(game.dials.space.value), 0, RS.cosmos.TIERS.length - 1);
-    /* Which layer a node belongs to is biased toward — but not locked to — the
-     * band being observed. A quarter of nodes come from neighbouring bands, so
-     * the spectrum always feels like it is bleeding at the edges and there is
-     * always something just off-tune to chase. */
-    let bandIndex = field.bandIndex;
-    const spread = hashF(hashN(game.seed, field.t * 1000 | 0, 3));
-    if (spread > 0.78) {
-      const dir = spread > 0.89 ? 1 : -1;
-      const alt = bandIndex + dir;
-      const focus = RS.dials.focusOf(game.dials.frequency);
-      if (alt >= 0 && alt < RS.spectrum.BANDS.length &&
-          RS.spectrum.BANDS[alt].centre <= game.dials.frequency.max &&
-          !RS.spectrum.isGhost(RS.spectrum.BANDS[alt], focus)) bandIndex = alt;
+    /* The first lock is a lesson, not a census. One nearby baryonic node
+     * whose φ sits under the default needle — neighbour-band bleed and a rim
+     * spawn would make the first sweep a hunt, and the first verb is hold. */
+    const lesson = (game.stats.crystals || 0) === 0 && field.bandIndex === 0;
+    let bandIndex = lesson ? 0 : field.bandIndex;
+    if (!lesson) {
+      /* Which layer a node belongs to is biased toward — but not locked to — the
+       * band being observed. A quarter of nodes come from neighbouring bands, so
+       * the spectrum always feels like it is bleeding at the edges and there is
+       * always something just off-tune to chase. */
+      const spread = hashF(hashN(game.seed, field.t * 1000 | 0, 3));
+      if (spread > 0.78) {
+        const dir = spread > 0.89 ? 1 : -1;
+        const alt = bandIndex + dir;
+        const focus = RS.dials.focusOf(game.dials.frequency);
+        if (alt >= 0 && alt < RS.spectrum.BANDS.length &&
+            RS.spectrum.BANDS[alt].centre <= game.dials.frequency.max &&
+            !RS.spectrum.isGhost(RS.spectrum.BANDS[alt], focus)) bandIndex = alt;
+      }
     }
 
-    const addr = nextAddress(field, tierIndex, bandIndex);
-    const man = RS.fractal.resolve(game.seed, tierIndex, bandIndex, addr.cellX, addr.cellY, addr.slot);
+    let addr = nextAddress(field, tierIndex, bandIndex);
+    let man = RS.fractal.resolve(game.seed, tierIndex, bandIndex, addr.cellX, addr.cellY, addr.slot);
+    if (lesson) {
+      const needle = game.dials.frequency.value;
+      let best = man, bestErr = Math.abs(man.signature - needle);
+      for (let tries = 0; tries < 48 && bestErr > 0.4; tries++) {
+        addr = nextAddress(field, tierIndex, bandIndex);
+        const cand = RS.fractal.resolve(game.seed, tierIndex, bandIndex, addr.cellX, addr.cellY, addr.slot);
+        const err = Math.abs(cand.signature - needle);
+        if (err < bestErr) { bestErr = err; best = cand; }
+      }
+      man = best;
+    }
     const band = RS.spectrum.BANDS[bandIndex];
     const h = hashN(man.seed, 31);
 
     const ang = hashF(h, 1) * TAU;
-    const rad = FIELD_RADIUS * SPAWN_MARGIN;
+    const rad = lesson ? 0.22 : FIELD_RADIUS * SPAWN_MARGIN;
     /* Nodes drift on slow near-circular paths rather than straight lines —
      * straight lines leave the field too fast to ever be tuned into, and an
-     * orbit reads as "this place has structure". */
-    const orbit = 0.30 + hashF(h, 2) * 0.62;
+     * orbit reads as "this place has structure". The first node is already
+     * in the room so the sweep is short. */
+    const orbit = lesson ? 0.22 : (0.30 + hashF(h, 2) * 0.62);
     const node = {
       id: 'n' + (game.__nodeSeq = (game.__nodeSeq || 0) + 1),
       man, band,
@@ -263,7 +281,8 @@
       depth: 0,
       parent: null,
       blocked: false,
-      orderMet: 0, orderNeed: 0, orderBonus: 1
+      orderMet: 0, orderNeed: 0, orderBonus: 1,
+      lesson: lesson
     };
     field.nodes.push(node);
     return node;
@@ -366,8 +385,11 @@
 
     /* Spawning. Rate follows how much of the spectrum is actually manifesting:
      * tuned to nothing, almost nothing appears, which makes the empty parts of
-     * the axis feel genuinely empty rather than merely unrewarding. */
-    const cap = capacityOf(game);
+     * the axis feel genuinely empty rather than merely unrewarding. Until the
+     * first crystal there is one node, because a crowded field teaches search
+     * before it teaches hold. */
+    const cap = ((game.stats.crystals || 0) === 0 && field.bandIndex === 0)
+      ? 1 : capacityOf(game);
     const manifestStrength = clamp01(spec.peak);
     field.spawnAcc += dt * (0.55 + manifestStrength * 2.3);
     while (field.spawnAcc >= 1 && field.nodes.length < cap) {
@@ -568,7 +590,9 @@
           const d = Math.hypot(n.x, n.y) + 1e-4;
           const radial = (f.gx * n.x + f.gy * n.y) / d;
           const tangent = (f.gy * n.x - f.gx * n.y) / d;
-          n.targetRad = clamp(n.targetRad + radial * f.strength * dt * 0.30 * sgn, 0.16, 1.08);
+          if (!n.lesson) {
+            n.targetRad = clamp(n.targetRad + radial * f.strength * dt * 0.30 * sgn, 0.16, 1.08);
+          }
           n.spin = clamp(n.spin + tangent * dt * 0.55 * sgn, -0.95, 0.95);
           break;
         }

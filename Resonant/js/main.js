@@ -136,38 +136,10 @@
         body: 'The baryonic layer kept accreting: +' + RS.core.fmt(game.__offline.gained) + ' Ψ'
       });
     }
-    if (game.stats.crystals === 0) firstRunHints();
 
     acc = 0; lastT = 0; saveAcc = 0; fieldAcc = 0;
     if (rafId) cancelAnimationFrame(rafId);
     rafId = requestAnimationFrame(loop);
-  }
-
-  /* First run. Four staggered cards used to overlap each other and the world
-   * they were describing; now they arrive one at a time, well spaced, and each
-   * has retired before the next appears. Deliberately shown at `major` so the
-   * notification setting cannot hide the only tutorial the game has — and
-   * deliberately only four, because the guide is written against live state and
-   * pointing at it is worth more than any amount of text here. */
-  const FIRST_RUN = [
-    { at: 0, icon: '◉', hue: 205, title: 'You are a point of consciousness',
-      body: 'You cannot move. You can only change what is rendered to you.' },
-    { at: 6500, icon: 'φ', hue: 187, title: 'Turn the φ dial',
-      body: 'Drag it in a circle. Swing wide for fine control, and listen for the beat.' },
-    { at: 13000, icon: '◈', hue: 43, title: 'Hold the lock',
-      body: 'Line up the arcs around yourself. Coherence fills while you hold.' },
-    { at: 19500, icon: '?', hue: 200, title: 'Lost? Tap ? at any time',
-      body: 'The guide describes whatever is in front of you right now.' }
-  ];
-
-  function firstRunHints() {
-    for (const h of FIRST_RUN) {
-      const fire = () => RS.ui.toast({
-        kind: 'major', icon: h.icon, hue: h.hue, ms: 5200,
-        title: h.title, body: h.body
-      });
-      if (h.at === 0) fire(); else setTimeout(fire, h.at);
-    }
   }
 
   function onResize() {

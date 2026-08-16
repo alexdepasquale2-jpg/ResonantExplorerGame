@@ -538,5 +538,5 @@
       'A probe left in their sky, or a beacon, keeps the channel open after you leave.';
   }
 
-  RS.guide = { guideHTML, pathwaysHTML, dialRows, SYMBOLS };
+  RS.guide = { guideHTML, pathwaysHTML, dialRows, SYMBOLS, foresight };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));

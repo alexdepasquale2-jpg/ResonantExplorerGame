@@ -364,6 +364,7 @@
       if (!s.planet) selectBody(game, bus, mostInteresting(game, s.system));
       s.agents.length = 0;
       s.lon = 0; s.lat = 0;
+      preferLandPose(game);
       sampleSurface(game);
     } else if (kind === 'cellular') {
       /* You are always inside a cell *of somewhere*. Arriving without a world
@@ -401,9 +402,12 @@
   }
 
   /* Rank worlds by how much there is to find. Life beats habitability beats
-   * resources beats size — which is the order a player cares about them in. */
+   * walkable ground beats resources — a first land that is ocean teaches a
+   * refusal, not a walk. */
   function mostInteresting(game, system) {
     let best = -1, score = -1;
+    const walkerOnly = !!(game.vessels && game.vessels.unlocked && game.vessels.unlocked.walker)
+      && !(game.vessels.unlocked.swimmer);
     for (let i = 0; i < system.bodies.length; i++) {
       const b = system.bodies[i];
       if (b.kind !== 'planet') continue;
@@ -411,6 +415,10 @@
       if (!p) continue;
       let sc = p.habitability * 4 + (p.biosphere ? p.biosphere.complexity * 6 : 0) +
         (p.type.landable ? 1 : 0) + Math.log10(1 + p.massE) * 0.2;
+      if (p.type.landable) {
+        if (p.hydrosphere < 0.55) sc += 2.2;
+        else if (p.hydrosphere > 0.85 && walkerOnly) sc -= 2.4;
+      }
       if (sc > score) { score = sc; best = i; }
     }
     return best >= 0 ? best : 0;
@@ -521,6 +529,18 @@
     if (!civ) { s.contact = null; return; }
 
     RS.contact.accrueAwareness(game, p, civ, dt);
+    const rec = RS.contact.recordOf(game, p);
+    /* Awareness was a silent wait until 0.35. The ramp is the event — two
+     * warm-ups so a lock with no reply feels like someone stirring, not a
+     * broken Hail. */
+    if (rec.awareness >= 0.12 && !rec.warmed1) {
+      rec.warmed1 = true;
+      if (bus && bus.emit) bus.emit('contact:warming', { planet: p, civ, stage: 1 });
+    }
+    if (rec.awareness >= 0.25 && !rec.warmed2) {
+      rec.warmed2 = true;
+      if (bus && bus.emit) bus.emit('contact:warming', { planet: p, civ, stage: 2 });
+    }
     const lock = RS.contact.lockOf(game, p, civ);
     const state = RS.contact.stateOf(game, p, civ, lock);
     const prev = s.contact && s.contact.state;
@@ -544,6 +564,69 @@
   }
 
   // ── planet scene ─────────────────────────────────────────────────────────
+
+  /* 96 samples, a different question: where can this body stand? Do not grow
+   * the profile — walk lon at the current lat, then a few lat nudges. */
+  function liquidAt(planet, lon, lat, t) {
+    const r = RS.planet.biomeAt(planet, lon, lat, t);
+    const sea = RS.planet.seaLevel(planet);
+    const wet = r.elev < sea && r.biome.id !== 'ice';
+    return { wet, biome: r.biome, elev: r.elev, T: r.T };
+  }
+
+  function wantLiquid(arch) {
+    if (!arch) return false;
+    if (arch.id === 'swimmer') return true;
+    if (arch.medium && arch.medium.indexOf && arch.medium.indexOf('liquid') >= 0
+        && arch.medium.indexOf('surface') < 0) return true;
+    return false;
+  }
+
+  function bearingWord(dlon) {
+    if (Math.abs(dlon) < 0.04) return 'ahead';
+    return dlon > 0 ? 'east' : 'west';
+  }
+
+  function nearestStandable(game, archOrWant) {
+    const s = game.scene;
+    const p = s && s.planet;
+    if (!p) return null;
+    const wantWet = archOrWant === 'liquid' || (archOrWant && typeof archOrWant === 'object' && wantLiquid(archOrWant));
+    const N = 96;
+    const t = s.t;
+    let best = null, bestD = 1e9;
+    const lats = [s.lat || 0];
+    for (let k = 1; k <= 4; k++) {
+      lats.push(RS.planet.clampLat((s.lat || 0) + k * 0.14));
+      lats.push(RS.planet.clampLat((s.lat || 0) - k * 0.14));
+    }
+    for (let li = 0; li < lats.length; li++) {
+      const lat = lats[li];
+      for (let i = 0; i < N; i++) {
+        const lon = (i / N) * TAU;
+        const r = liquidAt(p, lon, lat, t);
+        if (wantWet ? !r.wet : r.wet) continue;
+        const dlon = wrapDeltaLon(lon - (s.lon || 0));
+        const d = Math.abs(dlon) + Math.abs(lat - (s.lat || 0)) * 0.6;
+        if (d < bestD) {
+          bestD = d;
+          best = { lon, lat, biome: r.biome, elev: r.elev, dlon, bearing: bearingWord(dlon) };
+        }
+      }
+      if (best && li === 0) break;
+    }
+    return best;
+  }
+
+  function preferLandPose(game) {
+    const s = game.scene;
+    if (!s || !s.planet || !s.planet.type || !s.planet.type.landable) return null;
+    const found = nearestStandable(game, 'land');
+    if (!found) return null;
+    s.lon = found.lon;
+    s.lat = found.lat;
+    return found;
+  }
 
   /* Where on the planet the player is standing, and what it is like there. */
   function sampleSurface(game) {
@@ -869,9 +952,28 @@
       return { ok: false,
         reason: 'nothing persists at this scale — there is nothing for a body to be made of' };
     }
-    const env = RS.vessel.environmentFor(game);
-    const blocked = RS.vessel.canOperate(arch, env);
-    if (blocked) return { ok: false, reason: blocked };
+    const env0 = RS.vessel.environmentFor(game);
+    let blocked = RS.vessel.canOperate(arch, env0);
+    /* A walker refused for ocean is not a dead end — move the reticle to the
+     * nearest shore and try again. The 96-sample scan is the same budget as
+     * the profile; a different question of it. */
+    if (blocked && /liquid/i.test(blocked) && game.scene.kind === 'planet') {
+      const shore = nearestStandable(game, arch);
+      if (shore) {
+        game.scene.lon = shore.lon;
+        game.scene.lat = shore.lat;
+        sampleSurface(game);
+        blocked = RS.vessel.canOperate(arch, RS.vessel.environmentFor(game));
+      }
+    }
+    if (blocked) {
+      const shore = game.scene.kind === 'planet' ? nearestStandable(game, arch) : null;
+      let reason = blocked;
+      if (/liquid/i.test(blocked) && shore && shore.bearing) {
+        reason = 'this is ocean; the shore is ' + shore.bearing;
+      }
+      return { ok: false, reason };
+    }
 
     game.body = RS.vessel.newBody(archId);
     game.body.charge = arch.capacity * 0.6;
@@ -902,7 +1004,7 @@
         return { ok: false, reason: 'no mind here to ride' };
       }
     }
-    bus.emit('vessel:embark', { arch, env });
+    bus.emit('vessel:embark', { arch, env: RS.vessel.environmentFor(game) });
     return { ok: true };
   }
 
@@ -963,6 +1065,8 @@
     const rec = game.surveys[key] || (game.surveys[key] = { work: 0, lastAt: -99 });
     if (now - rec.lastAt < PULSE_COOLDOWN) return { ok: false, reason: 'cooling' };
 
+    const local = RS.planet.resourceAt(s.planet, s.lon, s.lat);
+    const patch = RS.planet.biomeAt(s.planet, s.lon, s.lat, s.t);
     const rich = richnessAt(s.planet, s.lon, s.lat);
     const first = rec.work === 0;
     const dim = 1 / (1 + rec.work * 0.12);
@@ -982,12 +1086,21 @@
       if (ex.ok) extracted = ex;
     }
 
+    let seam = null, seamName = null;
+    let bestSeam = 0;
+    for (const k in local) {
+      if (local[k] > bestSeam) { bestSeam = local[k]; seam = k; }
+    }
+    if (seam && RS.civ && RS.civ.COMM_BY_ID[seam]) seamName = RS.civ.COMM_BY_ID[seam].name;
+    else if (seam) seamName = seam;
+
     if (bus && bus.emit) {
       bus.emit('place:pulse', {
-        amount, rich, first, planet: s.planet, work: rec.work, extracted
+        amount, rich, first, planet: s.planet, work: rec.work, extracted,
+        biome: patch && patch.biome, seam: seamName
       });
     }
-    return { ok: true, amount, rich, first, extracted };
+    return { ok: true, amount, rich, first, extracted, biome: patch && patch.biome, seam: seamName };
   }
 
   /* Selling converts cargo to Insight at the local market price — which is why
@@ -1020,7 +1133,7 @@
     SCENES, SCENE_BY_ID, sceneForTier, tierForScene, newScene, systemAddrFrom, systemKey, enterSystem, selectBody,
     derivePlanet, mostInteresting, tick, systemPositions, terrainProfile,
     neighbourhood, cameraMode, cycleCamera, cameraLabel, sampleSurface, embark, disembark, extract, sell, pulse, richnessAt, PULSE_COOLDOWN, PROFILE_N,
-    FREE_W, FREE_H,
+    FREE_W, FREE_H, nearestStandable, preferLandPose,
     TIER_CLUSTER, civAt, tickContact, wrapDeltaLon
   };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));

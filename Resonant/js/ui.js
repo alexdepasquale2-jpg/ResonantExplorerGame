@@ -24,7 +24,7 @@
 
   function init(game, bus) {
     for (const id of ['insight-val', 'rate-val', 'gnosis-val', 'progress-fill', 'progress-pct',
-      'tier-name', 'tier-sci', 'layer-name', 'layer-rules', 'objective',
+      'tier-name', 'tier-sci', 'layer-name', 'layer-rules', 'objective', 'verb',
       'toasts', 'readout', 'drawer', 'drawer-body', 'drawer-title', 'drawer-tabs',
       'btn-drawer-close', 'beat-hint', 'btn-menu',
       'scene-tag', 'body-bar', 'btn-contact', 'contact-hint']) {
@@ -321,7 +321,8 @@
       setText('layer-rules', p.type.name + ' · ' + Math.round(p.surfaceTemp) + ' K · ' +
         p.gravity.toFixed(2) + ' g · ' +
         (p.pressure < 0.01 ? 'no atmosphere' : p.pressure.toFixed(2) + ' bar') +
-        (p.biosphere ? ' · ' + p.biosphere.stage.name : ''));
+        (p.biosphere ? ' · ' + p.biosphere.stage.name : '') +
+        (RS.influence.expressionOn(game, p) > 0.005 ? ' · expressed from within' : ''));
       el['layer-name'].style.color = hsl(p.type.hue, 0.75, 0.72);
     } else {
       setText('layer-name', band.name.toUpperCase() + (ghost ? ' · GHOST' : ''));
@@ -333,6 +334,11 @@
 
     const obj = RS.game.sceneObjective(game);
     setText('objective', obj.text);
+    if (el.verb) {
+      const v = RS.game.sceneVerb(game);
+      setText('verb', v);
+      el.verb.dataset.verb = v;
+    }
 
     /* Scene tag: which of the three worlds the player is in, and — critically —
      * which mode the dials are in, because that is the one thing they must
@@ -676,9 +682,24 @@
     const band = RS.spectrum.nearestBand(D.value);
     const err = Math.abs(D.value - band.centre);
     const hz = err * RS.audio.BEAT_SCALE;
-    const show = err < band.width * 2.2 && err > 0.02;
+    const showBeat = err < band.width * 2.2 && err > 0.02;
+    const first = (game.stats.crystals || 0) === 0;
+    const show = showBeat || first;
+    if (!el['beat-hint']) return;
     el['beat-hint'].style.opacity = show ? '1' : '0';
-    if (show) setText('beat-hint', 'beat ' + hz.toFixed(2) + ' Hz — slow it to zero');
+    if (first && !showBeat) {
+      setText('beat-hint', 'Swing wide of the knob for fine control');
+    } else if (showBeat) {
+      setText('beat-hint', 'beat ' + hz.toFixed(2) + ' Hz — slow it to zero');
+    }
+  }
+
+  function pulseSceneTag() {
+    const tag = el['scene-tag'];
+    if (!tag) return;
+    tag.classList.remove('hint');
+    void tag.offsetWidth;
+    tag.classList.add('hint');
   }
 
   // --- toasts --------------------------------------------------------------
@@ -1199,10 +1220,13 @@
 
     // structures
     const placed = RS.influence.structuresOn(game, p);
+    const hereRate = RS.influence.passiveFrom(game, p);
     const exRate = RS.influence.extractorRate(game);
+    const hasEx = placed.some(x => x.struct.id === 'extractor');
     h += '<h3 style="margin-top:12px">Structures <em>upkeep ' +
       RS.influence.totalUpkeep(game).toFixed(1) + '/' + fmt(game.passiveRate) +
-      (exRate > 0.001 ? ' · seams +' + exRate.toFixed(2) + '/s' : '') + '</em></h3>';
+      (hasEx ? ' · seams +' + hereRate.toFixed(2) + '/s from this world'
+        : (exRate > 0.001 ? ' · seams +' + exRate.toFixed(2) + '/s' : '')) + '</em></h3>';
     if (placed.length) {
       h += '<div class="list">';
       for (const x of placed) {
@@ -1450,7 +1474,7 @@
   RS.ui = {
     setNotifyLevel, init, render, toast, toggleDrawer, openDrawer, closeDrawer, renderDrawer, renderTabs, setText, TABS,
     worldHTML, vesselsHTML, contactHTML, codexHTML, upgradesHTML, settingsHTML,
-    toggleDebug, renderDebug, setDebugOpen,
+    toggleDebug, renderDebug, setDebugOpen, pulseSceneTag,
     get drawerOpen() { return drawerOpen; },
     get debugOpen() { return debugOpen; }
   };

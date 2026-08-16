@@ -157,8 +157,20 @@
     const foc = RS.dials.focusOf(D.frequency);
 
     if (game.stats.crystals === 0) {
-      return { text: 'Sweep φ until a smudge resolves, then hold the lock.', kind: 'tutorial' };
+      return { text: 'Drag the cyan φ knob until the beat goes still, then hold.', kind: 'tutorial' };
     }
+    /* Descent is a want, not a shop. After the first crystal, name the star
+     * (or the Σ purchase that opens the map) before the next φ upgrade — the
+     * globe they cannot touch is the reason to buy a body. */
+    const mapRung = RS.scenes.tierForScene('galaxy');
+    const canReachMap = mapRung >= D.space.min && mapRung <= D.space.max;
+    if ((game.stats.systemsSeen || 0) === 0) {
+      if (!canReachMap) {
+        return { text: 'Buy Σ RANGE, then turn Σ inward — a star is waiting.', kind: 'range' };
+      }
+      return { text: 'Turn Σ inward to the star map. Tap a star, then turn Σ again.', kind: 'descend' };
+    }
+    const hunt = recognitionHunt(game);
     /* A band inside the dial's reach but never crystallised is the strongest
      * pull the game has — it is visible, it is close, and it is not yours. */
     for (const b of RS.spectrum.BANDS) {
@@ -174,9 +186,35 @@
     if (nextBand) {
       return { text: 'Nothing new within φ' + D.frequency.max.toFixed(0) + '. Buy φ RANGE to reach ' + nextBand.name + '.', kind: 'range', band: nextBand };
     }
+    if (hunt) return hunt;
     const nextTier = RS.cosmos.TIERS.find(t => !game.known.tiers[t.id] && t.index >= D.space.min && t.index <= D.space.max);
     if (nextTier) return { text: 'Unvisited scale in reach: ' + nextTier.name + '.', kind: 'tier', tier: nextTier };
     return { text: 'Buy Σ RANGE to open the ladder further within, or beyond.', kind: 'range' };
+  }
+
+  /* After an essence has been met twice, the objective may name it. Insight
+   * cannot buy this pathway; that is the point. */
+  function recognitionHunt(game) {
+    if (!RS.guide || !RS.guide.foresight) return null;
+    const fs = RS.guide.foresight(game);
+    if (!fs || !fs.nearest) return null;
+    const n = RS.fractal.gnosisOf(game, fs.nearest.id);
+    if (n < 2 || fs.gap <= 0) return null;
+    return {
+      text: fs.nearest.name + ' still has a blank axis. Find it in a cell, or in a filament.',
+      kind: 'recognition', essence: fs.nearest
+    };
+  }
+
+  /* Persistent tap language. Same three meanings (strike / pulse / pick);
+   * the chip is what stops the cursor from lying. */
+  function sceneVerb(game) {
+    const s = game.scene;
+    if (!s) return 'STRIKE';
+    if (s.kind === 'planet') return 'SURVEY';
+    if (s.kind === 'system') return 'AIM';
+    if (s.kind === 'galaxy') return game.galaxy && game.galaxy.target ? 'TRAVEL' : 'AIM';
+    return 'STRIKE';
   }
 
   /* The objective line inside an embodied scene is a different question, so it
@@ -185,7 +223,16 @@
     const s = game.scene;
     if (s.kind === 'galaxy') {
       const reachLy = (RS.influence.reachRadius(game) * RS.galaxy.LY_PER_SECTOR).toFixed(0);
+      if (game.flags && game.flags.firstAmberName && !game.stats.contacts) {
+        return { text: 'Someone is here — ' + game.flags.firstAmberName +
+          '. Tap the amber ring.', kind: 'contact' };
+      }
       if (!game.galaxy.target) {
+        const rumours = RS.galaxy.rumourMarks ? RS.galaxy.rumourMarks(game) : [];
+        if (rumours.length) {
+          return { text: 'A rumour names ' + rumours[0].name +
+            '. Follow the dashed mark.', kind: 'contact' };
+        }
         return { text: 'Tap a star to select it. Dim stars are beyond your ' + reachLy +
           ' ly field — amber rings are inhabited.', kind: 'select' };
       }
@@ -208,8 +255,8 @@
         }
         return { text: 'A carrier at φ' + s.contact.lock.carrier.phi.toFixed(1) + '. Tune φ and Δ onto it.', kind: 'contact' };
       }
-      if (!Object.keys(game.research).length) {
-        return { text: 'Research LOCOMOTION to build a body you can land with.', kind: 'research' };
+      if (!game.research.locomotion) {
+        return { text: 'Research Locomotion (120 Ψ) to walk this.', kind: 'research' };
       }
       if (s.planet && !s.planet.type.landable) {
         return { text: s.planet.name + ' has no surface. Select a rocky world, then turn Σ inward to descend.', kind: 'select' };
@@ -227,8 +274,7 @@
           kind: 'scrub' };
       }
       if (w.assembling > 0.25) {
-        return { text: 'A filament is at peak growth right now — ×' +
-          RS.web.bonusFor(game).toFixed(2) + ' while it lasts. Crystallise before it finishes.',
+        return { text: 'A filament is assembling *now*. Present day is the wrong time — crystallise while it is still growing.',
           kind: 'express' };
       }
       return { text: 'Nothing is assembling at ' + w.tGyr.toFixed(1) +
@@ -240,9 +286,8 @@
           kind: 'select' };
       }
       const d = Math.round(s.blockNode.distance * 100);
-      return { text: s.blockNode.block.name + ' is ' + d +
-        '% unlike ours. The essences are the same essences. ×' +
-        RS.ensemble.bonusFor(game).toFixed(2) + ' to recognise one under these laws.',
+      return { text: 'The same system, twice: ours, and ' + s.blockNode.block.name +
+        ' (' + d + '% unlike). Leave and physics restores.',
         kind: 'express' };
     }
     if (s.kind === 'molecular') {
@@ -254,7 +299,7 @@
       }
       if (m.anomalous) {
         return { text: m.anomalous + ' molecule' + (m.anomalous > 1 ? 's' : '') +
-          ' of the wrong hand — the warm ones. ×' + RS.molecular.bonusFor(game).toFixed(2) + '.',
+          ' of the wrong hand — the warm ones. That is the find.',
           kind: 'express' };
       }
       return { text: 'Every chiral site here is the hand life chose. Sweep Σ for a sample that is not.',
@@ -265,8 +310,8 @@
       if (!sh) return { text: 'Resolving…', kind: 'wait' };
       if (sh.degenerate) {
         return { text: sh.degenerate + ' occupants share an energy without sharing a state. ' +
-          'That coincidence is where chemistry comes from — and it pays ×' +
-          RS.shells.bonusFor(game).toFixed(2) + '.', kind: 'express' };
+          'Two fighting over one place — that coincidence is where chemistry comes from.',
+          kind: 'express' };
       }
       return { text: sh.displaced + ' occupants were pushed outward because their state was taken. ' +
         'Excited, and about to fall back.', kind: 'express' };
@@ -282,8 +327,8 @@
       }
       if (f.survivors) {
         return { text: f.survivors + ' fluctuation' + (f.survivors > 1 ? 's' : '') +
-          ' never cancelled — the bright, still one. Work that. ×' +
-          RS.foam.bonusFor(game).toFixed(2) + '.', kind: 'express' };
+          ' never cancelled — the bright, still one. Work that.',
+          kind: 'express' };
       }
       return { text: 'Every pair here closes. Sweep Σ for a slab where one did not.', kind: 'select' };
     }
@@ -303,18 +348,26 @@
           "'s biosphere changes. It is the only place you can work a world from inside.",
           kind: 'express' };
       }
-      return { text: s.planet.name + ' is ' + Math.round(ex * 100) +
-        '% expressed. Turn Σ out to see the difference from orbit.', kind: 'express' };
+      return { text: 'Turn Σ out — ' + s.planet.name +
+        "'s biosphere has changed. You can read it from orbit.", kind: 'express' };
     }
     if (s.kind === 'planet') {
       if (!game.inhabiting) {
+        if (!game.research.locomotion) {
+          return { text: 'Research Locomotion (120 Ψ) to walk this.', kind: 'research' };
+        }
         return { text: 'Take a body to touch this world. Unembodied, you can only watch it.', kind: 'embark' };
       }
       const st = RS.vessel.statusOf(game);
       if (st && st.blocked) {
-        return { text: 'This body cannot work here: ' + st.blocked +
-          (st.alternative ? '. Take the ' + st.alternative.name + ' instead.' : '. Nothing you have works here.'),
-          kind: 'blocked' };
+        const shore = RS.scenes.nearestStandable && RS.scenes.nearestStandable(game, st.arch);
+        let fix = st.alternative ? '. Take the ' + st.alternative.name + ' instead.'
+          : '. Nothing you have works here.';
+        if (/liquid/i.test(st.blocked) && shore && shore.bearing) {
+          fix = '. Shore is ' + shore.bearing +
+            (st.alternative ? ', or take the ' + st.alternative.name : '') + '.';
+        }
+        return { text: 'This body cannot work here: ' + st.blocked + fix, kind: 'blocked' };
       }
       /* The dial map lives on the pilot bar now and is permanently visible, so
        * repeating it here would spend the one line that could say something
@@ -372,5 +425,5 @@
     game.__lastInsight = game.insight;
   }
 
-  RS.game = { SAVE_VERSION, newGame, tryUpgrade, nextObjective, sceneObjective, progress, tickMeta };
+  RS.game = { SAVE_VERSION, newGame, tryUpgrade, nextObjective, sceneObjective, sceneVerb, recognitionHunt, progress, tickMeta };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));

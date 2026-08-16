@@ -209,7 +209,10 @@
     game.insight -= s.cost.insight;
     const key = planetKey(planet);
     const list = game.deltas[key] || (game.deltas[key] = []);
-    list.push({ id: structId, at: game.stats.playSeconds, progress: 0 });
+    list.push({
+      id: structId, at: game.stats.playSeconds, progress: 0,
+      lon: game.scene && game.scene.lon, lat: game.scene && game.scene.lat
+    });
     bus.emit('structure:place', { planet, struct: s });
     return { ok: true };
   }

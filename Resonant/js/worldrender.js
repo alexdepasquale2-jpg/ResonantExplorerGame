@@ -455,6 +455,68 @@
     ctx.beginPath(); ctx.arc(rx, ry, 7, 0, TAU); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(rx - 12, ry); ctx.lineTo(rx - 8, ry);
     ctx.moveTo(rx + 8, ry); ctx.lineTo(rx + 12, ry); ctx.stroke();
+    drawExtractorMarks(ctx, game, p, s, 'globe', { cx, cy, R });
+  }
+
+  function extractorsOn(game, p) {
+    const list = game.deltas && RS.influence && RS.influence.planetKey
+      ? game.deltas[RS.influence.planetKey(p)] : null;
+    if (!list) return [];
+    const out = [];
+    for (let i = 0; i < list.length; i++) if (list[i].id === 'extractor') out.push(list[i]);
+    return out;
+  }
+
+  /* A sited extractor is a mark on the world, not a cache key. Same sample
+   * budgets; the glyph sits on the existing globe / slice / neighbourhood. */
+  function drawExtractorMarks(ctx, game, p, s, mode, view) {
+    const list = extractorsOn(game, p);
+    if (!list.length) return;
+    const wrap = RS.scenes.wrapDeltaLon;
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (let i = 0; i < list.length; i++) {
+      const d = list[i];
+      const lon = d.lon != null ? d.lon : s.lon;
+      const lat = d.lat != null ? d.lat : s.lat;
+      const m = d.progress || 0;
+      const a = 0.38 + m * 0.62;
+      ctx.fillStyle = hsl(40, 0.92, 0.62, a);
+      if (mode === 'globe') {
+        const dlon = wrap(lon - s.lon);
+        if (Math.abs(dlon) > Math.PI * 0.52) continue;
+        const X = view.cx + Math.sin(dlon) * view.R * Math.cos(lat);
+        const Y = view.cy - Math.sin(lat) * view.R;
+        ctx.font = '700 ' + Math.round(8 + m * 6) + 'px system-ui, sans-serif';
+        ctx.fillText('\u229E', X, Y);
+      } else if (mode === 'sideon') {
+        const span = 0.09 + s.altitude * 0.9;
+        const dlon = wrap(lon - s.lon);
+        if (Math.abs(dlon) > span) continue;
+        const w = V().w;
+        const horizon = V().cy + px(0.35);
+        const X = (0.5 + dlon / (span * 2)) * w;
+        const elev = RS.planet.elevationDetailAt(p, lon, lat);
+        const base = RS.planet.elevationDetailAt(p, s.lon, s.lat);
+        const Y = horizon + (base - elev) * px(0.5) - (6 + m * 10);
+        ctx.font = '700 ' + Math.round(10 + m * 8) + 'px system-ui, sans-serif';
+        ctx.fillText('\u229E', X, Y);
+      } else if (mode === 'freeroam') {
+        const w = V().w, h = V().h;
+        const span = 0.16 * (1 + s.altitude * 2.4);
+        const FW = RS.scenes.FREE_W, FH = RS.scenes.FREE_H;
+        const spanLat = span * (FH / FW);
+        const dlon = wrap(lon - s.lon);
+        const dlat = lat - s.lat;
+        if (Math.abs(dlon) > span || Math.abs(dlat) > spanLat) continue;
+        const X = w * 0.5 + (dlon / (span * 2)) * w;
+        const Y = h * 0.5 - (dlat / (spanLat * 2)) * h;
+        ctx.font = '700 ' + Math.round(11 + m * 7) + 'px system-ui, sans-serif';
+        ctx.fillText('\u229E', X, Y);
+      }
+    }
+    ctx.restore();
   }
 
   function atmosphereHue(p) {
@@ -702,6 +764,8 @@
     // ── agents ──
     for (const a of s.agents) drawAgent(ctx, game, a, horizon, vscale, base, prof.elev, n, w);
 
+    drawExtractorMarks(ctx, game, p, s, 'sideon');
+
     // ── the player's body ──
     drawBody(ctx, game, horizon, vscale, base, w);
   }
@@ -911,6 +975,7 @@
     }
 
     drawVesselGlyph(ctx, game, w * 0.5, h * 0.5);
+    drawExtractorMarks(ctx, game, p, s, 'freeroam');
     /* Heading tick so the map reads as a body, not a cursor. */
     const body = game.body;
     const hd = body.heading || 0;

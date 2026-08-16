@@ -814,6 +814,26 @@
       ctx.beginPath();
       ctx.arc(view.cx, view.cy, R0, a0, a0 + (a1 - a0) * fill);
       ctx.stroke();
+      /* First lock: a one-shot ghost on the φ arc so the player can see which
+       * knob to drag without a paragraph. Retires after the first crystal. */
+      if (i === 0 && (game.stats.crystals || 0) === 0) {
+        const pulse = 0.45 + 0.35 * Math.sin(t * 3.2);
+        ctx.strokeStyle = hsl(187, 0.95, 0.72, pulse);
+        ctx.lineWidth = Math.max(3, px(0.016));
+        ctx.beginPath();
+        ctx.arc(view.cx, view.cy, R0 + px(0.018), a0, a1);
+        ctx.stroke();
+      }
+    }
+    if ((game.stats.crystals || 0) === 0 && n) {
+      ctx.strokeStyle = hsl(187, 0.8, 0.7, 0.28);
+      ctx.lineWidth = Math.max(1, px(0.004));
+      ctx.setLineDash([px(0.012), px(0.01)]);
+      ctx.beginPath();
+      ctx.moveTo(view.cx, view.cy);
+      ctx.lineTo(sx(n.x), sy(n.y));
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
     ctx.restore();
   }
