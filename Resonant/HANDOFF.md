@@ -284,7 +284,7 @@ What is still worth doing:
 ## 9. Verification checklist before you push
 
 ```bash
-node tools/simtest.js     # 2023 assertions, zero failures
+node tools/simtest.js     # 2030 assertions, zero failures
 node tools/build.mjs      # single file still builds
 ```
 
