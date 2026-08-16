@@ -12,7 +12,7 @@ backend, no assets. Runs offline from `index.html`.
 
 ```
 python3 -m http.server 8000      # then open http://localhost:8000/index.html
-node tools/simtest.js            # 315 headless assertions, no DOM
+node tools/simtest.js            # 1650 headless assertions, no DOM
 node tools/build.mjs             # -> dist/resonant.html, one self-contained file
 ```
 
@@ -404,15 +404,14 @@ composite back with `lighter`. Each scope declares how hard it glows — the foa
 seethes because everything in it is an event; a planet surface barely blooms
 because it is lit rather than luminous.
 
-**The capture happens at the top of the frame, before the clear**, and that is
-the entire performance story. Measured in isolation the steps cost 1.3 ms;
-called at the end of the frame they cost **16 ms**, because sampling a canvas
-with drawing queued on it forces the browser to finish all of it first. Captured
-before the clear — when the canvas holds last frame's finished image and nothing
-is queued — the flush is free. The glow is one frame behind what makes it, which
-at 60 Hz nobody can see.
+**The world is drawn into an offscreen buffer**, and bloom reads that — never
+the canvas it is about to composite onto. Sampling a canvas with drawing queued
+on it forces the browser to finish all of it first: the steps cost 1.3 ms in
+isolation and **16 ms** when they sampled their own target. A copy of a finished
+world buffer is not that flush, the glow is in the same frame as the thing
+making it, and the attunement field gets the headroom back.
 
-It still costs about 3 fps in the busiest scope and nothing measurable in the
+It still costs a little in the busiest scope and nothing measurable in the
 others, so there is a settings toggle.
 
 ### Arrival
@@ -758,7 +757,7 @@ All audio is synthesised at runtime — there are no sound files.
 | `scene_shells.js` | Orbital shells: exclusion, Aufbau placement, degeneracy |
 | `physics.js` | the constants, gathered and swappable; ours is the default block |
 | `game.js` `save.js` | state, economy, objectives, persistence |
-| `bloom.js` | the post pass: threshold, blur, and why it captures before the clear |
+| `bloom.js` | the post pass: world buffer, threshold, blur, blit |
 | `audio.js` `feel.js` | procedural synthesis; shake/hitstop/particles/haptics |
 | `primhud.js` | one readout per primitive, with the predicted behaviour ghosted behind |
 | `render.js` `worldrender.js` `hud.js` `ui.js` `input.js` `reactions.js` | presentation |
@@ -823,7 +822,7 @@ revealed) and reads its dialogue off the rendered DOM.
 ## Status
 
 **Complete as designed.** Every phase of the plan this was built against has
-landed, and the invariants are held by 952 assertions rather than by intention:
+landed, and the invariants are held by 1650 assertions rather than by intention:
 
 - All **22 rungs** have a scope of their own, every one reachable by turning Σ,
   none absorbed by a scope that is not about it.
@@ -837,18 +836,9 @@ landed, and the invariants are held by 952 assertions rather than by intention:
 What a next pass would most usefully do, in order of how much it would change
 the game:
 
-- **Culture-to-culture relations.** Standing is per-player. Cultures knowing
-  about *each other* — and about what you did to their neighbours — is the same
-  derived-plus-delta pattern with one more index.
-- **Riding a civilisation.** Riding a mind works. Biasing a culture's trajectory
-  rather than a creature's is the same influence mechanic one scale up, and
-  `civOf` is already a closed-form curve waiting to be perturbed.
-- **Contact at range.** Carriers need you in the system. A probe left behind, or
-  a beacon network, could hold a channel open across light years.
-- **More essences.** The generative core is 16 × 4 numbers now — two were added
-  after everything else was finished, purely to exercise the property the whole
-  architecture exists to have, and **nothing else in the codebase was touched**:
-  no band table, no scene, no renderer, no primitive. They appear in twelve
-  layers, twenty-two rungs, nine scopes and every geometry because that is how
-  the first fourteen got there too. A test now asserts it, so a hardcoded count
-  or an array sized to the essence list would fail loudly.
+- **Bloom cost in the attunement field.** The world buffer removes the flush;
+  the remaining threshold/blur is still the dearest post pass.
+- **A census of rumours.** Neighbour sampling is hashed and capped; widening
+  it is safe and cheap compared to a full sector walk.
+- **Guide copy for riding a culture.** The symbiont now works in orbit when a
+  civilisation is selected. The live guide still leads with riding a creature.

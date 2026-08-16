@@ -23,7 +23,7 @@ const FILES = [
   'js/core.js', 'js/cosmos.js', 'js/spectrum.js', 'js/dials.js', 'js/fractal.js', 'js/emergence.js', 'js/selfsimilar.js',
   'js/strike.js', 'js/field.js', 'js/physics.js', 'js/orbital.js', 'js/stellar.js', 'js/civ.js', 'js/planet.js',
   'js/neural.js', 'js/vessel.js', 'js/inhabitants.js', 'js/localtime.js', 'js/influence.js', 'js/galaxy.js', 'js/contact.js',
-  'js/scene_cellular.js', 'js/scene_web.js', 'js/scene_foam.js', 'js/scene_ensemble.js', 'js/scene_molecular.js', 'js/scene_shells.js', 'js/scenes.js', 'js/game.js', 'js/guide.js', 'js/save.js', 'js/audio.js', 'js/ui.js'
+  'js/scene_cellular.js', 'js/scene_web.js', 'js/scene_foam.js', 'js/scene_ensemble.js', 'js/scene_molecular.js', 'js/scene_shells.js', 'js/scenes.js', 'js/game.js', 'js/guide.js', 'js/save.js', 'js/audio.js', 'js/ui.js', 'js/bloom.js'
 ];
 
 const sandbox = {
@@ -40,6 +40,24 @@ sandbox.localStorage = {
 };
 sandbox.window = sandbox;
 sandbox.globalThis = sandbox;
+sandbox.document = {
+  createElement() {
+    return {
+      width: 1, height: 1,
+      getContext() {
+        return {
+          setTransform() {}, globalCompositeOperation: 'source-over', globalAlpha: 1,
+          fillStyle: '#000', drawImage() {}, fillRect() {}, save() {}, restore() {}
+        };
+      }
+    };
+  }
+};
+sandbox.OffscreenCanvas = function (w, h) {
+  const c = sandbox.document.createElement();
+  c.width = w; c.height = h;
+  return c;
+};
 vm.createContext(sandbox);
 for (const f of FILES) {
   vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), sandbox, { filename: f });
@@ -1560,6 +1578,219 @@ const posOut = { x: 0, y: 0, z: 0, r: 0 };
     assert(!g.scene.contact, 'an empty world produces no contact state');
     assert(Object.keys(g.contacts).length === 0, 'and no relationship record');
   }
+}
+
+// ── cultures know about each other, and about what you did ───────────────
+{
+  const here = { system: { addr: { sx: 0, sy: 0, index: 0 } }, bodyIndex: 0, hash: 1, name: 'Here' };
+  const there = { system: { addr: { sx: 2, sy: 0, index: 0 } }, bodyIndex: 0, hash: 2, name: 'There' };
+  const pre = { tech: 0.1, tier: RS.civ.techTierOf(0.1), disposition: RS.civ.DISPOSITIONS[0] };
+  const inter = { tech: 0.9, tier: RS.civ.techTierOf(0.9), disposition: RS.civ.DISPOSITIONS[0] };
+  assert(!RS.contact.knowsOf(pre, here, there), 'a pre-industrial culture has not heard of a neighbour two sectors out');
+  assert(RS.contact.knowsOf(inter, here, there), 'an interstellar culture has');
+  assert(!RS.contact.knowsOf(inter, here, here), 'and never of itself');
+  assert(RS.contact.knowledgeRadius(inter) > RS.contact.knowledgeRadius(pre),
+    'reach is the knowledge radius');
+
+  const g = RS.game.newGame(12345);
+  /* Reuse the civilisation the previous block found — hunt again so this
+   * block does not depend on execution order. */
+  let found = null;
+  outer2:
+  for (let sx = 0; sx < 40; sx++) {
+    for (let sy = 0; sy < 8; sy++) {
+      for (let ix = 0; ix < 3; ix++) {
+        const sys = RS.stellar.systemAt(g.seed, sx, sy, ix);
+        for (let j = 0; j < sys.bodies.length; j++) {
+          if (sys.bodies[j].kind !== 'planet') continue;
+          const p = RS.planet.planetAt(sys, j);
+          if (!p) continue;
+          const civ = RS.civ.civOf(p, 0);
+          if (civ) { found = { p, civ }; break outer2; }
+        }
+      }
+    }
+  }
+  assert(found, 'rumour tests have a culture to observe');
+  if (found) {
+    const { p, civ } = found;
+    const observer = Object.assign({}, civ, { tier: RS.civ.techTierOf(0.9) });
+    /* A neighbour you allied with, close enough that an interstellar observer
+     * would have heard. The neighbour does not have to exist as a derived
+     * world — the rumour is the contact record. */
+    const nk = (p.system.addr.sx + 1) + ',' + p.system.addr.sy + ',0,0';
+    g.contacts[nk] = {
+      standing: 0.7, awareness: 1, met: true, greeted: true,
+      name: 'Ally Weave', where: 'Elsewhere', exchanges: 3, taught: [], gifts: 0, uplifted: 0
+    };
+    const rum = RS.contact.rumourOf(g, p, observer);
+    assert(rum.notes.length > 0, 'they have heard of what you did to a neighbour');
+    assert(rum.shift !== 0, 'and it moves standing, not just flavour');
+
+    g.contacts[nk].standing = -0.8;
+    const hostile = RS.contact.rumourOf(g, p, observer);
+    assert(hostile.notes.some(n => /enemy|against/i.test(n)),
+      'hostility toward a neighbour is a thing they will say');
+
+    g.contacts[nk].standing = 0.2;
+    g.contacts[nk].uplifted = 1;
+    const up = RS.contact.rumourOf(g, p, observer);
+    assert(up.notes.some(n => /raised/i.test(n)), 'uplift of a neighbour is heard');
+    const insular = Object.assign({}, observer, {
+      disposition: RS.civ.DISPOSITIONS.find(d => d.id === 'insular')
+    });
+    const curious = Object.assign({}, observer, {
+      disposition: RS.civ.DISPOSITIONS.find(d => d.id === 'curious')
+    });
+    const wI = RS.contact.rumourOf(g, p, insular).shift;
+    const wC = RS.contact.rumourOf(g, p, curious).shift;
+    assert(wI < wC, 'an insular culture resents a neighbour being raised; a curious one does not');
+
+    /* Effective standing is derived, so it is not a second saved number. */
+    const rec = RS.contact.recordOf(g, p);
+    rec.standing = 0;
+    const effective = RS.contact.standingOf(g, p, curious);
+    assert(Math.abs(effective - rec.standing) > 0.02, 'rumours change the standing the channel reads');
+    assert(Math.abs(rec.standing) < 1e-9, 'without writing the contact record');
+  }
+}
+
+// ── contact at range: a probe or beacon holds the channel ────────────────
+{
+  const g = RS.game.newGame(12345);
+  let found = null;
+  outer3:
+  for (let sx = 0; sx < 40; sx++) {
+    for (let sy = 0; sy < 8; sy++) {
+      for (let ix = 0; ix < 3; ix++) {
+        const sys = RS.stellar.systemAt(g.seed, sx, sy, ix);
+        for (let j = 0; j < sys.bodies.length; j++) {
+          if (sys.bodies[j].kind !== 'planet') continue;
+          const p = RS.planet.planetAt(sys, j);
+          if (p && RS.civ.civOf(p, 0)) { found = { sys, p, j, sx, sy, ix, civ: RS.civ.civOf(p, 0) }; break outer3; }
+        }
+      }
+    }
+  }
+  assert(found, 'range tests have a culture');
+  if (found) {
+    const { p, civ, sys, j, sx, sy, ix } = found;
+    g.scene.system = sys;
+    g.scene.systemAddr = { sx, sy, index: ix };
+    RS.scenes.selectBody(g, nullBus, j);
+    g.scene.kind = 'system';
+
+    assert(!RS.contact.hasRelay(g, p), 'no relay until you leave one');
+    /* Presence still accrues without a relay. */
+    const rec = RS.contact.recordOf(g, p);
+    RS.contact.accrueAwareness(g, p, civ, 1);
+    assert(rec.awareness > 0, 'being there still accrues awareness');
+
+    /* Leave, and awareness stops without a relay. */
+    const before = rec.awareness;
+    g.scene.planet = null;
+    RS.contact.accrueAwareness(g, p, civ, 10);
+    assert(Math.abs(rec.awareness - before) < 1e-9, 'leaving without a relay stops accrual');
+
+    /* A beacon is a relay — that is what "you can be sensed further out" was
+     * always for. */
+    g.scene.planet = p;
+    g.structuresUnlocked.beacon = true;
+    g.insight = 1e9; g.passiveRate = 1e6;
+    assert(RS.influence.place(g, nullBus, p, 'beacon').ok, 'a beacon sites');
+    g.scene.planet = null;
+    RS.contact.accrueAwareness(g, p, civ, 1);
+    assert(rec.awareness > before, 'a beacon keeps accruing awareness from elsewhere');
+    assert(RS.contact.hasRelay(g, p), 'and counts as a relay');
+
+    /* A stationed probe is the portable version. */
+    const g2 = RS.game.newGame(12345);
+    g2.scene.system = sys;
+    g2.scene.systemAddr = { sx, sy, index: ix };
+    RS.scenes.selectBody(g2, nullBus, j);
+    g2.vessels.unlocked.probe = true;
+    g2.body = RS.vessel.newBody('probe');
+    g2.inhabiting = true;
+    const st = RS.contact.stationProbe(g2, nullBus, p);
+    assert(st.ok, 'a probe can be left behind');
+    assert(RS.contact.probeOn(g2, p), 'and is stored as a delta, not a structure');
+    assert(RS.contact.hasRelay(g2, p), 'so it is a relay');
+    assert(RS.influence.structuresOn(g2, p).every(x => x.struct.id !== '@probe'),
+      'and structuresOn does not see it as a billed structure');
+
+    /* The offer agrees with the action. */
+    const offers = RS.contact.offersFor(g2, p, civ);
+    const station = offers.find(o => o.id === 'station');
+    assert(station, 'the panel offers to station a probe while you are one');
+    assert(!station.available, 'but not twice');
+
+    /* Round-trip: the probe delta survives a save. */
+    RS.save.writeNow(g2);
+    const h = RS.save.hydrate(RS.save.readRaw());
+    assert(RS.contact.probeOn(h, p), 'a stationed probe round-trips');
+  }
+}
+
+// ── riding a civilisation leans on the logistic, not a stored civ ────────
+{
+  const g = RS.game.newGame(12345);
+  let found = null;
+  outer4:
+  for (let sx = 0; sx < 40; sx++) {
+    for (let sy = 0; sy < 8; sy++) {
+      for (let ix = 0; ix < 3; ix++) {
+        const sys = RS.stellar.systemAt(g.seed, sx, sy, ix);
+        for (let j = 0; j < sys.bodies.length; j++) {
+          if (sys.bodies[j].kind !== 'planet') continue;
+          const p = RS.planet.planetAt(sys, j);
+          const civ = p && RS.civ.civOf(p, 0);
+          if (civ) { found = { p, civ, sys, j }; break outer4; }
+        }
+      }
+    }
+  }
+  assert(found, 'ride tests have a culture');
+  if (found) {
+    const { p, civ } = found;
+    const tech0 = civ.tech;
+    const ctl = { rate: 1, vert: 1, heading: 0 };
+    for (let i = 0; i < 240; i++) RS.contact.lean(g, p, ctl, 1 / 60);
+    const bias = RS.contact.biasOn(g, p);
+    assert(bias.work > 0 && bias.mag > 0, 'leaning accumulates a saturating bias');
+    const applied = RS.contact.applyTo(g, p, RS.civ.civOf(p, 0));
+    assert(applied.tech >= tech0, 'and the trajectory has moved, not a stored number');
+    assert(applied.biased > 0, 'the civ reports that it was leaned on');
+
+    /* Lattice ceiling is no longer scenery. */
+    p.techCeiling = 0.12;
+    const withLat = RS.contact.applyTo(g, p, RS.civ.civOf(p, 0));
+    assert(withLat.tech > applied.tech || applied.tech > 0.98,
+      'a lattice ceiling actually raises tech');
+
+    /* A system with a civ is a mind the symbiont can ride. */
+    g.scene.kind = 'system';
+    g.scene.planet = p;
+    g.scene.planet.civ = civ;
+    const env = RS.vessel.environmentFor(g);
+    assert(env.hasMinds, 'a selected civilisation is a mind to ride');
+    assert(!RS.vessel.canOperate(RS.vessel.BY_ID.symbiont, env),
+      'and the symbiont is allowed in orbit for that reason');
+  }
+}
+
+// ── bloom captures a world buffer, not its own composite target ──────────
+{
+  assert(RS.bloom, 'bloom is loaded');
+  assert(typeof RS.bloom.begin === 'function', 'and exposes a world buffer');
+  assert(typeof RS.bloom.captureWorld === 'function', 'and a capture that reads it');
+  assert(typeof RS.bloom.blit === 'function', 'and a blit onto the display');
+  RS.bloom.setEnabled(true);
+  assert(RS.bloom.isEnabled(), 'enabled is the default the settings toggle talks to');
+  const buf = RS.bloom.begin(64, 48, 1);
+  assert(buf && buf.ctx && buf.canvas, 'begin hands the renderer a context to draw into');
+  RS.bloom.setEnabled(false);
+  assert(!RS.bloom.begin(64, 48, 1), 'and begin refuses when bloom is off, so the display is the draw target');
+  RS.bloom.setEnabled(true);
 }
 
 

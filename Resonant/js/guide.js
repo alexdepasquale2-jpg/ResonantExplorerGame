@@ -477,6 +477,10 @@
     if (c) {
       const st = RS.contact.stateOf(game, c.planet, c.civ, c.lock);
       if (st === RS.contact.STATES.open || st === RS.contact.STATES.warm) {
+        if (c.relayed) {
+          return 'A relay is holding the channel with ' + c.civ.name +
+            '. Keep φ on their carrier, or go back and listen.';
+        }
         return 'A channel is open with ' + c.civ.name + '. Listen first — it costs nothing.';
       }
       return 'Tune φ to ' + c.lock.carrier.phi.toFixed(1) + ' to reach ' + c.civ.name + '.';
@@ -493,7 +497,8 @@
       }
       return 'Look for amber pulsing rings on the galactic map, then descend into that system.';
     }
-    return 'Raise standing above +0.45 with an ally and ask them to teach you.';
+    return 'Raise standing above +0.45 with an ally and ask them to teach you. ' +
+      'A probe left in their sky, or a beacon, keeps the channel open after you leave.';
   }
 
   RS.guide = { guideHTML, pathwaysHTML, dialRows, SYMBOLS };

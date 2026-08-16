@@ -491,9 +491,16 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   font-size: 10px; font-weight: 400; color: hsl(var(--h), 70%, 70%);
 }
 @media (max-width: 560px) {
-  /* On a phone the bar is competing with the world for a narrow column, so the
-     dial map drops to the two controls that differ most between bodies. */
-  .bb-dial:nth-child(n+3) { display: none; }
+  /* All four dial meanings stay visible: they wrap onto a second line
+     rather than vanishing, because a mapping you cannot see is not a mapping. */
+  .bb-dials { gap: 5px 10px; }
+  .bb-dial:nth-child(n+3) { display: inline-flex; }
+  #body-bar {
+    padding: 5px 8px;
+    gap: 6px;
+    max-width: calc(100vw - 20px);
+  }
+  .bb-name { max-width: 9ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 
 /* The readout is the anchor for the bottom-left column; once the body bar
@@ -654,6 +661,25 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   color: var(--ink);
   border-bottom-color: hsl(190, 70%, 60%);
   background: rgba(140, 175, 220, .09);
+}
+
+@media (max-width: 560px) {
+  /* Glyphs stay; labels live in the drawer title. The row is a thumb-width
+     scroller with 44px targets instead of a clipped sentence of seven words. */
+  #drawer-tabs {
+    gap: 0;
+    padding: 4px 8px 6px;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x proximity;
+  }
+  #drawer-tabs button {
+    padding: 8px 10px 6px;
+    min-width: 44px;
+    font-size: 0;
+    letter-spacing: 0;
+    scroll-snap-align: start;
+  }
+  #drawer-tabs button span { font-size: 16px; }
 }
 
 </style>
@@ -6030,7 +6056,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     {
       id: 'symbiont', name: 'Symbiont', glyph: '❋', hue: 340,
       blurb: 'No body of its own. Rides a living mind and leans on it — you influence, you do not command.',
-      medium: [MEDIUM.SURFACE, MEDIUM.LIQUID, MEDIUM.GAS],
+      medium: [MEDIUM.SURFACE, MEDIUM.LIQUID, MEDIUM.GAS, MEDIUM.ORBIT],
       mass: 0.05, thrust: 0, dragC: 1, liftC: 0, grip: 0,
       senseRadius: 0.6, senseBands: 5, capacity: 90, draw: 0.9, regen: 1.1,
       needs: env => !env.hasMinds ? 'no minds here to ride' : null,
@@ -6086,13 +6112,15 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       };
     }
     if (scene.kind === 'system') {
+      const p = scene.planet;
+      const civ = p && (p.civ || RS.civ.civOf(p, scene.tGyr));
       return {
         medium: MEDIUM.ORBIT,
         gravity: 0, pressure: 0,
         temperature: 3,
         flux: scene.system ? RS.stellar.fluxAt(scene.system, Math.max(0.05, scene.radius || 1)) : 1,
         roughness: 0,
-        hasMinds: false,
+        hasMinds: !!civ,
         label: scene.system ? scene.system.name : 'system'
       };
     }
@@ -6157,7 +6185,9 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       speed: Math.hypot(b.vx || 0, b.vy || 0),
       elevation: b.elevation || 0,
       holdMass: b.holdMass || 0,
-      possession: b.mindState ? b.mindState.possession : null,
+      possession: b.mindState ? b.mindState.possession
+        : (b.possession != null ? b.possession : null),
+      ridingCiv: !!b.ridingCiv,
       /* Seconds of charge left at the current draw, which is the number that
        * actually tells you whether to turn back. Infinite while regenerating. */
       endurance: enduranceOf(a, b, env),
@@ -6894,6 +6924,28 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     return a.sx + ',' + a.sy + ',' + a.index + ',' + planet.bodyIndex;
   }
 
+  function parsePlanetKey(key) {
+    if (!key) return null;
+    const p = String(key).split(',');
+    if (p.length !== 4) return null;
+    const sx = +p[0], sy = +p[1], index = +p[2], bodyIndex = +p[3];
+    if (![sx, sy, index, bodyIndex].every(Number.isFinite)) return null;
+    return { sx, sy, index, bodyIndex };
+  }
+
+  /* Re-derive a world from a stored address. Cheap, and the only way a
+   * relationship record can talk about a neighbour without keeping a copy of
+   * that neighbour around. */
+  function planetFromKey(game, key) {
+    const a = parsePlanetKey(key);
+    if (!a) return null;
+    const sys = RS.stellar.systemAt(game.seed, a.sx, a.sy, a.index);
+    if (!sys || !sys.bodies[a.bodyIndex] || sys.bodies[a.bodyIndex].kind !== 'planet') return null;
+    const p = RS.planet.planetAt(sys, a.bodyIndex);
+    if (p) applyTo(game, p);
+    return p;
+  }
+
   /* ── Structures ───────────────────────────────────────────────────────────
    * `effect` names which derived quantity the structure biases. All of them
    * are rates, ceilings or radii — never absolute values. */
@@ -7258,7 +7310,8 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 
   RS.influence = {
     STRUCTURES, STRUCT_BY_ID, RESEARCH, RESEARCH_BY_ID,
-    planetKey, isResearched, researchAvailable, tryResearch,
+    planetKey, parsePlanetKey, planetFromKey,
+    isResearched, researchAvailable, tryResearch,
     canPlace, place, structuresOn, totalUpkeep, structureCount,
     express, expressionOn, EXPRESSION_ID, EXPRESSION_CAP, EXPRESSION_SCALE,
     applyTo, passiveFrom, recomputeFields, reachRadius
@@ -7708,6 +7761,31 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
  * that number changes what they will do for you, what they say, and whether
  * uplifting them is welcomed or resented. It is stored per address — four
  * numbers in the save — and everything else about them stays derived.
+ *
+ * ── They know about each other ────────────────────────────────────────────
+ *
+ * Standing with you is per-player. What they know about *each other* is the
+ * same derived-plus-delta pattern with one more index: whether culture B has
+ * heard of culture A is a function of B's technological reach and the
+ * distance between them, and what they have heard *you* did to A is read
+ * off A's contact record. Nothing new is stored. A culture you have not
+ * met yet can already be cold because you raised their rival, and they will
+ * say so when you arrive.
+ *
+ * ── Contact at range ──────────────────────────────────────────────────────
+ *
+ * A carrier lock used to require you in the system. A Resonance Beacon on
+ * their world, or a probe left behind, is a relay: awareness still accrues
+ * (slower) and a lock you are holding still opens the channel, across light
+ * years. You still have to tune. The apparatus does not change; the medium
+ * it travels through does.
+ *
+ * ── Riding a civilisation ─────────────────────────────────────────────────
+ *
+ * Riding a mind (vessel.js, neural.js) leans on hidden units. Riding a
+ * culture is the same mechanic one scale up: you apply a bias vector to the
+ * closed-form logistic `civOf` already is, stored as a saturating delta.
+ * You never set a technology level. You lean on a trajectory.
  */
 (function (RS) {
   'use strict';
@@ -7744,6 +7822,18 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 
   function contactKey(planet) { return RS.influence.planetKey(planet); }
 
+  /* A probe left behind. Not a structure — it has no upkeep and is not in
+   * the research tree — so `structuresOn` skips it the way it skips
+   * expression. It is a delta because that is how anything the player
+   * changes a world survives. */
+  const PROBE_ID = '@probe';
+  /* Accumulated lean on a culture's trajectory. Same shape as expression:
+   * one number per world, saturating, never a stored civilisation. */
+  const BIAS_ID = '@civbias';
+  const BIAS_CAP = 0.32;
+  const BIAS_SCALE = 48;
+  const RUMOUR_CAP = 0.35;
+
   function recordOf(game, planet) {
     const k = contactKey(planet);
     return game.contacts[k] || (game.contacts[k] = {
@@ -7761,6 +7851,262 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       gifts: 0,
       uplifted: 0
     });
+  }
+
+  // ── culture-to-culture ───────────────────────────────────────────────────
+
+  /* Distance in sectors. The map's own unit, so a culture's technological
+   * `reach` (0 atmosphere … 5 post-material) translates directly into how
+   * far their knowledge extends. */
+  function sectorDist(here, there) {
+    const a = here.system.addr, b = there.system.addr;
+    return Math.hypot(a.sx - b.sx, a.sy - b.sy);
+  }
+
+  /* How far a culture's astronomers, traders or thought can see, in sectors.
+   * Pre-industrial cultures know their own world and nothing else; an
+   * interstellar one has a neighbourhood. The numbers sit on the same
+   * ladder `tier.reach` already is, so a culture that cannot leave its
+   * atmosphere also cannot have heard of what you did three systems over. */
+  function knowledgeRadius(civ) {
+    const r = civ && civ.tier ? civ.tier.reach : 0;
+    return [0, 0.15, 1.2, 2.5, 5, 9][clamp(r | 0, 0, 5)];
+  }
+
+  function knowsOf(civ, here, there) {
+    if (!civ || !here || !there) return false;
+    return knowsOfAddr(civ, here, {
+      sx: there.system.addr.sx, sy: there.system.addr.sy,
+      index: there.system.addr.index, bodyIndex: there.bodyIndex
+    });
+  }
+
+  function knowsOfAddr(civ, here, addr) {
+    if (!civ || !here || !addr) return false;
+    const a = here.system.addr;
+    if (a.sx === addr.sx && a.sy === addr.sy && a.index === addr.index &&
+        here.bodyIndex === addr.bodyIndex) return false;
+    const d = Math.hypot(a.sx - addr.sx, a.sy - addr.sy);
+    if (d === 0) return civ.tier.reach >= 1;
+    return d <= knowledgeRadius(civ);
+  }
+
+  /* How an observer feels about a kind of thing you did to someone else.
+   * Curious cultures like uplift; insular ones do not; expansionists are
+   * the ones who do not mind you making an enemy. */
+  function rumourWeight(dispId, kind) {
+    const d = dispId || 'curious';
+    if (kind === 'uplift') {
+      if (d === 'curious' || d === 'distributed' || d === 'contemplative') return 0.10;
+      if (d === 'insular' || d === 'hierarchic') return -0.14;
+      return 0.02;
+    }
+    if (kind === 'hostility') {
+      if (d === 'expansionist') return 0.05;
+      if (d === 'mercantile') return -0.06;
+      return -0.11;
+    }
+    if (kind === 'alliance') {
+      if (d === 'mercantile' || d === 'curious' || d === 'distributed') return 0.07;
+      if (d === 'insular' || d === 'expansionist') return -0.05;
+      return 0.02;
+    }
+    return 0;
+  }
+
+  /* What the observer has heard you did, derived entirely from existing
+   * contact records. No extra save slot: the neighbour's standing, gifts
+   * and uplifts *are* the rumour. */
+  function rumourOf(game, observerPlanet, observerCiv) {
+    const notes = [];
+    let shift = 0;
+    const selfKey = observerPlanet ? contactKey(observerPlanet) : '';
+    for (const key in game.contacts) {
+      if (key === selfKey) continue;
+      const rec = game.contacts[key];
+      if (!rec || !rec.met) continue;
+      const addr = RS.influence.parsePlanetKey(key);
+      if (!addr) continue;
+      if (!knowsOfAddr(observerCiv, observerPlanet, addr)) continue;
+      const name = rec.name || 'another culture';
+      if (rec.uplifted > 0) {
+        const w = rumourWeight(observerCiv.disposition.id, 'uplift');
+        shift += w * Math.min(2, rec.uplifted);
+        notes.push(w < 0
+          ? 'They have heard you raised ' + name + ', and they did not ask you to do that to anyone.'
+          : 'They have heard you raised ' + name + ', and they are not afraid of that.');
+      }
+      if (rec.standing < -0.45) {
+        const w = rumourWeight(observerCiv.disposition.id, 'hostility');
+        shift += w;
+        notes.push(w > 0
+          ? 'They know you made an enemy of ' + name + '. They do not mind an enemy of their rival.'
+          : 'They know you turned ' + name + ' against you, and they are drawing the obvious conclusion.');
+      } else if (rec.standing > 0.45) {
+        const w = rumourWeight(observerCiv.disposition.id, 'alliance');
+        shift += w;
+        notes.push(w < 0
+          ? 'They know you stand with ' + name + ', and that is not a recommendation here.'
+          : 'They know you stand with ' + name + '. That counts for something.');
+      }
+    }
+    shift = clamp(shift, -RUMOUR_CAP, RUMOUR_CAP);
+    return { shift, notes };
+  }
+
+  /* Direct standing plus what they have heard. Offers, warmth and the
+   * channel state all read this, so a rumour is a real mechanical
+   * consequence rather than flavour on top of an unchanged number. */
+  function standingOf(game, planet, civ) {
+    const rec = game.contacts[contactKey(planet)];
+    const base = rec ? rec.standing : 0;
+    const rumour = civ ? rumourOf(game, planet, civ) : { shift: 0 };
+    return clamp(base + rumour.shift, -1, 1);
+  }
+
+  /* Nearby cultures this one actually knows, sampled rather than exhaustively
+   * scanned — a full neighbourhood derivation on every greeting would be the
+   * one place the "nothing is stored" premise got expensive. The sample is
+   * hashed from the address, so two players meet the same neighbours. */
+  function neighboursOf(game, planet, civ) {
+    const R = knowledgeRadius(civ);
+    if (R < 0.5) return [];
+    const addr = planet.system.addr;
+    const h = planet.hash;
+    const out = [];
+    const seen = Object.create(null);
+    const samples = 10 + civ.tier.reach * 6;
+    for (let i = 0; i < samples && out.length < 5; i++) {
+      const ang = hashF(h, 210 + i) * Math.PI * 2;
+      const rad = 0.15 + hashF(h, 310 + i) * R;
+      const sx = Math.round(addr.sx + Math.cos(ang) * rad);
+      const sy = Math.round(addr.sy + Math.sin(ang) * rad);
+      const ix = hashN(h, 410 + i) % 3;
+      const key = sx + ',' + sy + ',' + ix;
+      if (seen[key]) continue;
+      seen[key] = true;
+      if (sx === addr.sx && sy === addr.sy && ix === addr.index) continue;
+      const sys = RS.stellar.systemAt(game.seed, sx, sy, ix);
+      if (!sys) continue;
+      for (let j = 0; j < sys.bodies.length; j++) {
+        if (sys.bodies[j].kind !== 'planet') continue;
+        const p = RS.planet.planetAt(sys, j);
+        if (!p) continue;
+        const c = RS.civ.civOf(p, 0);
+        if (!c) continue;
+        if (!knowsOf(civ, planet, p)) continue;
+        out.push({ planet: p, civ: c, dist: sectorDist(planet, p) });
+        break;
+      }
+    }
+    return out;
+  }
+
+  function relationOf(civA, planetA, civB, planetB) {
+    if (!knowsOf(civA, planetA, planetB)) return { known: false };
+    const d = sectorDist(planetA, planetB);
+    const same = civA.disposition.id === civB.disposition.id;
+    let stance = 'aware';
+    if (civA.disposition.id === 'insular') stance = 'wary';
+    else if (civA.disposition.id === 'expansionist' && civB.disposition.id !== 'expansionist') stance = 'rival';
+    else if (same || civA.disposition.id === 'curious' || civA.disposition.id === 'distributed') stance = 'open';
+    else if (civA.disposition.id === 'mercantile') stance = 'trading';
+    return { known: true, stance, dist: d, name: civB.name };
+  }
+
+  // ── relays ───────────────────────────────────────────────────────────────
+
+  function probeOn(game, planet) {
+    return probeOnKey(game, contactKey(planet));
+  }
+
+  function probeOnKey(game, key) {
+    const list = game.deltas[key];
+    if (!list) return false;
+    for (const d of list) if (d.id === PROBE_ID) return true;
+    return false;
+  }
+
+  /* A beacon on their world, or a probe you left. Either is enough to carry
+   * a channel you are still holding. Presence is the other way: being there. */
+  function hasRelay(game, planet) {
+    return hasRelayKey(game, contactKey(planet));
+  }
+
+  function hasRelayKey(game, key) {
+    if (probeOnKey(game, key)) return true;
+    const list = game.deltas[key];
+    if (!list) return false;
+    for (const d of list) if (d.id === 'beacon') return true;
+    return false;
+  }
+
+  function inPresence(game, planet) {
+    const s = game.scene;
+    if (!s || !s.planet) return false;
+    return contactKey(s.planet) === contactKey(planet);
+  }
+
+  function stationProbe(game, bus, planet) {
+    if (!game.inhabiting || !game.body || RS.vessel.archOf(game.body).id !== 'probe') {
+      return { ok: false, reason: 'you have to be a probe to leave one behind' };
+    }
+    if (probeOn(game, planet)) return { ok: false, reason: 'a probe is already stationed here' };
+    const key = contactKey(planet);
+    const list = game.deltas[key] || (game.deltas[key] = []);
+    list.push({ id: PROBE_ID, at: game.stats.playSeconds });
+    if (bus) bus.emit('contact:station', { planet });
+    return { ok: true };
+  }
+
+  // ── riding a culture ─────────────────────────────────────────────────────
+
+  function biasRecord(game, planet) {
+    const key = contactKey(planet);
+    const list = game.deltas[key] || (game.deltas[key] = []);
+    for (const d of list) if (d.id === BIAS_ID) return d;
+    const rec = { id: BIAS_ID, at: game.stats.playSeconds, work: 0, intent: 0 };
+    list.push(rec);
+    return rec;
+  }
+
+  function biasOn(game, planet) {
+    const list = planet && game.deltas[contactKey(planet)];
+    if (!list) return { tech: 0, cohesion: 0, work: 0, intent: 0, mag: 0 };
+    for (const d of list) {
+      if (d.id !== BIAS_ID) continue;
+      const u = 1 - Math.exp(-(d.work || 0) / BIAS_SCALE);
+      const intent = d.intent || 0;
+      /* Intent ≥ 0 leans on the technology logistic; intent < 0 leans on
+       * cohesion (lowers collapse peril). Both saturate, because a culture
+       * is a curve you can shove, not a value you can set. */
+      return {
+        tech: u * BIAS_CAP * (0.35 + 0.65 * clamp01(intent)),
+        cohesion: u * BIAS_CAP * (0.35 + 0.65 * clamp01(-intent)),
+        work: d.work || 0,
+        intent,
+        mag: u
+      };
+    }
+    return { tech: 0, cohesion: 0, work: 0, intent: 0, mag: 0 };
+  }
+
+  /* Sustained lean. τ is urgency, Σ is depth of hold, Δ is intent — the
+   * symbiont's own dial map, one scale up. Strength scales with the reality
+   * field, which is where that meta-progression cashes out into capability. */
+  function lean(game, planet, ctl, dt) {
+    if (!planet || !ctl) return null;
+    const rec = biasRecord(game, planet);
+    const urgency = Math.abs(ctl.rate || 0);
+    const depth = ctl.vert == null ? 0.5 : ctl.vert;
+    const intent = Math.cos(ctl.heading || 0);
+    const field = game.fields ? game.fields.reality : 0;
+    const amount = urgency * (0.25 + depth * 0.9) * (0.55 + field * 1.6) * dt;
+    rec.work += amount;
+    /* Intent is a leaky average so a brief twitch of Δ does not rewrite a
+     * long hold, and a long hold in one direction does. */
+    rec.intent = rec.intent + (intent - rec.intent) * (1 - Math.exp(-dt * 1.8));
+    return biasOn(game, planet);
   }
 
   const STATES = {
@@ -7799,23 +8145,29 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     };
   }
 
-  /* Awareness accrues while you are in their system. Reality field is the main
-   * driver — being *able to affect* a world is what makes you detectable in
-   * it — plus anything you have built, plus sheer time. */
+  /* Awareness accrues while you are in their system, or — slower — through
+   * a relay you left behind. Reality field is the main driver, plus anything
+   * you have built, plus sheer time. */
   function accrueAwareness(game, planet, civ, dt) {
     const rec = recordOf(game, planet);
     const rf = game.fields ? game.fields.reality : 0;
     const built = RS.influence.structuresOn(game, planet).length;
-    const rate = (0.012 + rf * 0.05 + built * 0.03) * (0.5 + civ.tech) * civ.disposition.contact;
+    const relay = hasRelay(game, planet);
+    const here = inPresence(game, planet);
+    if (!here && !relay) return rec.awareness;
+    const presence = here ? 1 : 0.42;
+    const rate = (0.012 + rf * 0.05 + built * 0.03 + (relay && !here ? 0.008 : 0)) *
+      (0.5 + civ.tech) * civ.disposition.contact * presence;
     rec.awareness = clamp01(rec.awareness + rate * dt);
     return rec.awareness;
   }
 
   function stateOf(game, planet, civ, lock) {
     const rec = recordOf(game, planet);
-    if (rec.standing < -0.45) return STATES.cold;
+    const standing = standingOf(game, planet, civ);
+    if (standing < -0.45) return STATES.cold;
     if (lock && lock.total > 0.72 && rec.awareness > 0.35) {
-      return rec.standing > 0.4 ? STATES.warm : STATES.open;
+      return standing > 0.4 ? STATES.warm : STATES.open;
     }
     if (rec.awareness > 0.35) return STATES.detected;
     if (lock && lock.total > 0.4) return STATES.reachable;
@@ -7871,6 +8223,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
      * they get their opening line. `greeted` is set here, when the words are
      * actually read, so the distinctive first thing a culture says to you is
      * never silently consumed by a state change you did not see. */
+    const first = !rec.greeted;
     if (!rec.greeted) {
       rec.greeted = true;
       lines.push(v.open);
@@ -7896,6 +8249,25 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     }
     if (civ.tier.reach >= 4) {
       lines.push('They are already interstellar. You are not telling them anything about size.');
+    }
+    const rumour = rumourOf(game, planet, civ);
+    for (const n of rumour.notes.slice(0, 2)) lines.push(n);
+    const neigh = neighboursOf(game, planet, civ);
+    if (neigh.length && !first) {
+      const n0 = neigh[0];
+      const rel = relationOf(civ, planet, n0.civ, n0.planet);
+      if (rel.known) {
+        const how = rel.stance === 'wary' ? 'warily'
+          : rel.stance === 'rival' ? 'as a rival'
+          : rel.stance === 'trading' ? 'as a market'
+          : 'as a neighbour';
+        lines.push('They know of ' + n0.civ.name + ' ' + how +
+          (n0.dist < 0.5 ? ' in this system.' : ' ' + n0.dist.toFixed(1) + ' sectors out.'));
+      }
+    }
+    const relay = hasRelay(game, planet);
+    if (relay && !inPresence(game, planet)) {
+      lines.push('The channel is riding a relay you left. They can still hear you.');
     }
     return lines;
   }
@@ -7987,6 +8359,22 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       effect: disp.id === 'insular' ? 'They will think better of you for it.' : 'Neutral.',
       cost: 0, available: true
     });
+
+    /* STATION — leave a probe so the channel survives you leaving. The
+     * beacon already does this as a side-effect of existing; a probe is the
+     * cheaper, portable version of the same idea. */
+    const flyingProbe = game.inhabiting && game.body &&
+      RS.vessel.archOf(game.body).id === 'probe';
+    if (flyingProbe || probeOn(game, planet)) {
+      out.push({
+        id: 'station', name: probeOn(game, planet) ? 'Probe stationed' : 'Leave a probe',
+        blurb: 'A sensor left in their sky keeps the channel open after you go.',
+        effect: 'Awareness and lock survive across light years, while you hold their carrier.',
+        cost: 0,
+        available: flyingProbe && !probeOn(game, planet),
+        why: probeOn(game, planet) ? 'already stationed' : 'wear a Probe in this system'
+      });
+    }
 
     return out;
   }
@@ -8125,25 +8513,85 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
         bus.emit('contact:withdraw', { planet, civ });
         return { ok: true, closed: true };
       }
+
+      case 'station': {
+        return stationProbe(game, bus, planet);
+      }
     }
     return { ok: false, reason: 'unknown' };
   }
 
-  /* Uplift is applied on top of the derived civilisation, the same way
-   * structures are applied on top of a derived planet. */
+  /* Uplift, lattice ceiling, rumour and cultural bias are applied on top of
+   * the derived civilisation, the same way structures are applied on top of
+   * a derived planet. The civilisation itself is never stored. */
   function applyTo(game, planet, civ) {
     const k = contactKey(planet);
     const rec = game.contacts[k];
-    if (!rec) return civ;
-    if (rec.uplifted > 0) {
-      civ.tech = clamp01(civ.tech + 0.09 * rec.uplifted);
-      civ.tier = RS.civ.techTierOf(civ.tech);
-      civ.uplifted = rec.uplifted;
+    if (rec) {
+      if (rec.uplifted > 0) {
+        civ.tech = clamp01(civ.tech + 0.09 * rec.uplifted);
+        civ.tier = RS.civ.techTierOf(civ.tech);
+        civ.uplifted = rec.uplifted;
+      }
+      civ.awareness = rec.awareness;
+      civ.met = rec.met;
+    } else {
+      civ.awareness = 0;
+      civ.met = false;
     }
-    civ.standing = rec.standing;
-    civ.awareness = rec.awareness;
-    civ.met = rec.met;
+    /* The lattice writes a ceiling onto the planet; consume it here, because
+     * a ceiling that is stored and never read is scenery. */
+    if (planet.techCeiling) {
+      civ.tech = clamp01(civ.tech + planet.techCeiling);
+      civ.tier = RS.civ.techTierOf(civ.tech);
+    }
+    const bias = biasOn(game, planet);
+    if (bias.mag > 0.002) {
+      civ.tech = clamp01(civ.tech + (1 - civ.tech) * bias.tech);
+      civ.tier = RS.civ.techTierOf(civ.tech);
+      civ.peril = (civ.peril || 0) * (1 - bias.cohesion * 1.15);
+      civ.biased = bias.mag;
+    }
+    civ.rumour = rumourOf(game, planet, civ).notes;
+    civ.standing = standingOf(game, planet, civ);
     return civ;
+  }
+
+  /* Relays keep a channel you are still holding, even from another system.
+   * Called every tick; cheap because it only walks contact records. */
+  function tickRelays(game, bus, dt) {
+    const s = game.scene;
+    if (!s) return;
+    const localKey = s.planet ? contactKey(s.planet) : null;
+    let best = null;
+    for (const k in game.contacts) {
+      if (k === localKey) continue;
+      if (!hasRelayKey(game, k)) continue;
+      const planet = RS.influence.planetFromKey(game, k);
+      if (!planet) continue;
+      const civ0 = RS.civ.civOf(planet, s.tGyr);
+      if (!civ0) continue;
+      const civ = applyTo(game, planet, civ0);
+      accrueAwareness(game, planet, civ, dt);
+      const lock = lockOf(game, planet, civ);
+      if (lock.total > 0.4 && (!best || lock.total > best.lock.total)) {
+        best = { planet, civ, lock };
+      }
+    }
+    if (s.contact || !best) return;
+    const state = stateOf(game, best.planet, best.civ, best.lock);
+    const prev = s.relayState;
+    s.contact = { civ: best.civ, lock: best.lock, state, planet: best.planet, relayed: true };
+    s.relayState = state;
+    if (prev !== state && (state === STATES.open || state === STATES.warm) &&
+        prev !== STATES.open && prev !== STATES.warm) {
+      const rec = recordOf(game, best.planet);
+      const first = !rec.met;
+      rec.met = true;
+      rec.name = best.civ.name;
+      rec.where = best.planet.name;
+      if (bus) bus.emit('contact:open', { planet: best.planet, civ: best.civ, first, lock: best.lock, relayed: true });
+    }
   }
 
   function totalMet(game) {
@@ -8159,10 +8607,14 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   }
 
   RS.contact = {
-    CARRIER_BANDS, STATES, VOICE,
+    CARRIER_BANDS, STATES, VOICE, PROBE_ID, BIAS_ID, BIAS_CAP, RUMOUR_CAP,
     carrierBandOf, carrierOf, contactKey, recordOf, lockOf,
     accrueAwareness, stateOf, isOpen, greeting, warmthOf, offersFor, act,
-    applyTo, totalMet, allies
+    applyTo, totalMet, allies,
+    sectorDist, knowledgeRadius, knowsOf, knowsOfAddr, rumourOf, rumourWeight,
+    standingOf, neighboursOf, relationOf,
+    hasRelay, hasRelayKey, probeOn, probeOnKey, inPresence, stationProbe, tickRelays,
+    biasOn, biasRecord, lean
   };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));
 
@@ -8647,6 +9099,10 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     if (c) {
       const st = RS.contact.stateOf(game, c.planet, c.civ, c.lock);
       if (st === RS.contact.STATES.open || st === RS.contact.STATES.warm) {
+        if (c.relayed) {
+          return 'A relay is holding the channel with ' + c.civ.name +
+            '. Keep φ on their carrier, or go back and listen.';
+        }
         return 'A channel is open with ' + c.civ.name + '. Listen first — it costs nothing.';
       }
       return 'Tune φ to ' + c.lock.carrier.phi.toFixed(1) + ' to reach ' + c.civ.name + '.';
@@ -8663,7 +9119,8 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       }
       return 'Look for amber pulsing rings on the galactic map, then descend into that system.';
     }
-    return 'Raise standing above +0.45 with an ally and ask them to teach you.';
+    return 'Raise standing above +0.45 with an ally and ask them to teach you. ' +
+      'A probe left in their sky, or a beacon, keeps the channel open after you leave.';
   }
 
   RS.guide = { guideHTML, pathwaysHTML, dialRows, SYMBOLS };
@@ -10261,6 +10718,11 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     else if (s.kind === 'molecular') RS.molecular.tick(game, bus, dt);
     else if (s.kind === 'shells') RS.shells.tick(game, bus, dt);
 
+    /* Relays keep channels open from other systems. Runs after the local
+     * scene has had a chance to claim `s.contact`, and is a no-op unless
+     * a probe or beacon is actually stationed somewhere. */
+    RS.contact.tickRelays(game, bus, dt);
+
     /* Inhabitants, in every scope. Derived rather than spawned, so they were
      * already doing this before you arrived and will be doing it when you come
      * back — and cost nothing at all while you are elsewhere. */
@@ -10624,15 +11086,26 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     const ctl = RS.vessel.controlsFrom(game);
 
     if (RS.vessel.archOf(body).neural && body.mind) {
-      /* Riding a mind: the mind drives, the player leans. */
-      const sense = nearestSense(game, s);
-      const r = RS.vessel.stepMind(game, body, env, ctl, dt, sense);
-      if (r) {
-        body.possession = r.possession;
-        body.arousal = r.arousal;
+      if (body.ridingCiv && s.planet) {
+        /* Riding a culture: the closed-form trajectory is what you lean on,
+         * not a creature's hidden units. Same dials, one scale up. */
+        const bias = RS.contact.lean(game, s.planet, ctl, dt);
+        if (bias) {
+          body.possession = clamp01((Math.abs(ctl.rate) * (0.3 + ctl.vert)) * 0.7 + bias.mag * 0.5);
+          body.arousal = bias.mag;
+        }
+        RS.vessel.integrate(game, body, env, { rate: 0, heading: body.heading, vert: ctl.vert, band: ctl.band }, dt);
+      } else {
+        /* Riding a mind: the mind drives, the player leans. */
+        const sense = nearestSense(game, s);
+        const r = RS.vessel.stepMind(game, body, env, ctl, dt, sense);
+        if (r) {
+          body.possession = r.possession;
+          body.arousal = r.arousal;
+        }
+        /* Still integrate drag and gravity so the ridden body obeys the world. */
+        RS.vessel.integrate(game, body, env, { rate: 0, heading: body.heading, vert: ctl.vert, band: ctl.band }, dt);
       }
-      /* Still integrate drag and gravity so the ridden body obeys the world. */
-      RS.vessel.integrate(game, body, env, { rate: 0, heading: body.heading, vert: ctl.vert, band: ctl.band }, dt);
     } else {
       const r = RS.vessel.integrate(game, body, env, ctl, dt);
       if (r.blocked && !body.__warned) {
@@ -10689,18 +11162,30 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     game.body.charge = arch.capacity * 0.6;
     game.inhabiting = true;
 
-    /* Riding a mind needs a mind to ride. Pick the most encephalised creature
-     * nearby, because that is the one worth being. */
+    /* Riding a mind needs a mind to ride. A creature if there is one; a
+     * civilisation if you are in their system with no body on the ground —
+     * that is the same influence mechanic one scale up, and it is why the
+     * symbiont works in orbit. */
     if (arch.neural) {
       const s = game.scene;
       let best = null;
       for (const a of s.agents) {
         if (!best || a.fauna.encephalisation > best.fauna.encephalisation) best = a;
       }
-      if (!best) { game.inhabiting = false; game.body = RS.vessel.newBody('mote'); return { ok: false, reason: 'no mind here to ride' }; }
-      RS.vessel.ride(game.body, best.fauna.hash);
-      best.ridden = true;
-      game.body.riddenFauna = best.fauna;
+      if (best) {
+        RS.vessel.ride(game.body, best.fauna.hash);
+        best.ridden = true;
+        game.body.riddenFauna = best.fauna;
+        game.body.ridingCiv = false;
+      } else if (s.planet && (s.planet.civ || RS.civ.civOf(s.planet, s.tGyr))) {
+        RS.vessel.ride(game.body, s.planet.hash);
+        game.body.ridingCiv = true;
+        game.body.riddenCivKey = RS.influence.planetKey(s.planet);
+      } else {
+        game.inhabiting = false;
+        game.body = RS.vessel.newBody('mote');
+        return { ok: false, reason: 'no mind here to ride' };
+      }
     }
     bus.emit('vessel:embark', { arch, env });
     return { ok: true };
@@ -12359,6 +12844,11 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   let bw = 0, bh = 0;
   let enabled = true;
 
+  /* Full-resolution world buffer. The display canvas is the composite
+   * target; this is what bloom *reads*. Capture never samples the canvas
+   * it is about to draw onto, which is the whole of the flush story. */
+  let world = null, wctx = null, ww = 0, wh = 0;
+
   function ensure(w, h) {
     const nw = Math.max(1, Math.round(w / DOWN));
     const nh = Math.max(1, Math.round(h / DOWN));
@@ -12383,7 +12873,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 
   /* `amount` 0..1 scales the whole effect, so a scope can bloom harder than
    * another and the transition can push it. */
-  /* ── Why the capture happens at the *top* of the frame ────────────────────
+  /* ── Why capture never samples the display ───────────────────────────────
    *
    * Measured, because the first version of this was four times slower than it
    * had any right to be. The individual steps cost, on a 320×215 buffer:
@@ -12399,11 +12889,13 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
    * field queues a great deal — fifteen nodes laying down radial gradients
    * under 'lighter'. The bloom was not slow; it was waiting.
    *
-   * So the capture happens at the *start* of the frame instead, before the
-   * clear, when the canvas still holds the previous frame's finished image and
-   * nothing is queued on it — which is exactly the idle condition that measured
-   * zero. The glow is therefore one frame behind the thing making it, which at
-   * 60 Hz is 16 ms of latency on light spill and is not a thing anyone can see.
+   * So the world is drawn into an offscreen buffer, and capture reads *that*
+   * — never the canvas bloom is about to composite onto. Sampling a canvas
+   * that is also the composite target, with drawing queued on it, was the
+   * 16 ms flush. Reading a finished world buffer and blitting it is a copy,
+   * not a flush of the frame you are still building. The glow is in the
+   * same frame as the thing making it, and the attunement field gets the
+   * ~3 fps back.
    *
    * `STRIDE` then halves the remaining work again: bloom is low-frequency, and
    * the glow around a thing that moved two pixels is the same glow.
@@ -12411,7 +12903,41 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   const STRIDE = 2;
   let frame = 0, valid = false;
 
-  /* Called before the frame is cleared. Reads last frame's image. */
+  function ensureWorld(pw, ph) {
+    if (world && ww === pw && wh === ph && wctx) return true;
+    ww = pw; wh = ph;
+    valid = false;
+    if (!world) {
+      world = typeof OffscreenCanvas !== 'undefined'
+        ? new OffscreenCanvas(pw, ph) : document.createElement('canvas');
+    }
+    world.width = pw; world.height = ph;
+    wctx = world.getContext('2d');
+    return !!wctx;
+  }
+
+  /* Prepare the world buffer for this frame. The renderer draws into the
+   * returned context (CSS pixels, same dpr transform as the display). */
+  function begin(w, h, dpr) {
+    if (!enabled) return null;
+    const pw = Math.max(1, Math.round(w * (dpr || 1)));
+    const ph = Math.max(1, Math.round(h * (dpr || 1)));
+    if (!ensureWorld(pw, ph)) return null;
+    wctx.setTransform(dpr || 1, 0, 0, dpr || 1, 0, 0);
+    return { canvas: world, ctx: wctx };
+  }
+
+  function captureWorld(w, h, threshold) {
+    if (!enabled || !world) return;
+    capture(world, w, h, threshold);
+  }
+
+  function blit(ctx, w, h) {
+    if (!world) return;
+    ctx.drawImage(world, 0, 0, ww, wh, 0, 0, w, h);
+  }
+
+  /* Called on a finished source. Reads that image into the bloom buffer. */
   function capture(canvas, w, h, threshold) {
     if (!enabled) return;
     if (!ensure(w, h)) return;
@@ -12477,9 +13003,16 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
    * `main.start`.
    */
   function warm(ctx, canvas, w, h) {
-    if (!ensure(w, h)) return false;
+    const dpr = (canvas && canvas.width && w) ? canvas.width / Math.max(1, w) : 1;
+    if (!begin(w, h, dpr) && !ensure(w, h)) return false;
+    if (wctx) {
+      wctx.setTransform(1, 0, 0, 1, 0, 0);
+      wctx.fillStyle = '#03050a';
+      wctx.fillRect(0, 0, ww, wh);
+    }
     for (let i = 0; i <= STRIDE; i++) {
-      capture(canvas, w, h, 0.5);
+      if (world) capture(world, w, h, 0.5);
+      else capture(canvas, w, h, 0.5);
       composite(ctx, w, h, 0.005);
     }
     valid = false;
@@ -12489,7 +13022,10 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   function setEnabled(on) { enabled = !!on; valid = false; }
   function isEnabled() { return enabled; }
 
-  RS.bloom = { DOWN, PASSES, STRIDE, capture, composite, warm, setEnabled, isEnabled };
+  RS.bloom = {
+    DOWN, PASSES, STRIDE, capture, captureWorld, composite, blit, begin, warm,
+    setEnabled, isEnabled
+  };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));
 
 </script>
@@ -13469,15 +14005,16 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 
     ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
 
-    /* Bloom captures *here*, before the clear, while the canvas still holds the
-     * previous frame's finished image and nothing is queued on it. Sampling a
-     * canvas with drawing queued on it forces a pipeline flush — measured at
-     * 16 ms in this scope, against 1.3 ms of actual work. See bloom.js. */
-    if (game.settings.bloom !== false && RS.bloom) {
-      const kb = BLOOM[game.scene ? game.scene.kind : 'field'] || BLOOM.field;
-      const trc = game.scene ? game.scene.transition : 0;
-      RS.bloom.capture(canvas, view.w, view.h, kb.thr * (1 - trc * 0.35));
-    }
+    /* Bloom reads an offscreen world buffer, never this canvas. Drawing the
+     * world into a buffer and compositing it means capture is a copy of a
+     * finished source rather than a flush of the frame still being built —
+     * see bloom.js. Fall back to drawing on the display if the buffer cannot
+     * be allocated, and skip bloom for that frame rather than stall it. */
+    const displayCtx = ctx;
+    const bloomOn = game.settings.bloom !== false && RS.bloom && RS.bloom.isEnabled();
+    const worldBuf = bloomOn ? RS.bloom.begin(view.w, view.h, view.dpr) : null;
+    if (worldBuf) ctx = worldBuf.ctx;
+    ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
 
     ctx.clearRect(0, 0, view.w, view.h);
 
@@ -13666,13 +14203,21 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
      *
      * After the world and before the vignette, so light spills between things
      * and the vignette still darkens the edge of the result rather than being
-     * bloomed itself. Pushed hard during a transition, which is most of why an
-     * arrival now reads as an event rather than as a cut. */
-    if (game.settings.bloom !== false && RS.bloom) {
+     * bloomed itself. Capture reads the world buffer; the display only
+     * receives a blit plus the glow. Pushed hard during a transition, which
+     * is most of why an arrival now reads as an event rather than as a cut. */
+    if (bloomOn && RS.bloom) {
       const b = BLOOM[kind] || BLOOM.field;
       const tr = game.scene ? game.scene.transition : 0;
-      RS.bloom.composite(ctx, view.w, view.h,
-        b.amt * (1 + tr * 1.4) * (game.settings.reduceMotion ? 0.6 : 1));
+      const amt = b.amt * (1 + tr * 1.4) * (game.settings.reduceMotion ? 0.6 : 1);
+      if (worldBuf) {
+        RS.bloom.captureWorld(view.w, view.h, b.thr * (1 - tr * 0.35));
+        displayCtx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
+        displayCtx.clearRect(0, 0, view.w, view.h);
+        RS.bloom.blit(displayCtx, view.w, view.h);
+        RS.bloom.composite(displayCtx, view.w, view.h, amt);
+        ctx = displayCtx;
+      }
     }
 
     drawPost(ctx);
@@ -15413,7 +15958,8 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
           Math.round(st.strain * 100) + '%</span>' : '') +
       (st.holdMass > 0 ? '<span class="bb-tag">' + fmt(st.holdMass) + 'u</span>' : '') +
       (st.possession != null ? '<span class="bb-tag" style="color:#f0abfc" ' +
-        'title="how much of this mind is you">' + (st.possession * 100).toFixed(0) + '% you</span>' : '') +
+        'title="how much of this ' + (st.ridingCiv ? 'culture' : 'mind') + ' is you">' +
+        (st.possession * 100).toFixed(0) + '% you</span>' : '') +
       '<span class="bb-dials">' +
         dial('τ', 43, dm.time) + dial('Σ', 338, dm.space) +
         dial('Δ', 268, dm.phase) + dial('φ', 187, dm.frequency) +
@@ -16282,7 +16828,8 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     const carrier = lock.carrier;
     let h = '';
 
-    h += '<section><h3>' + civ.name + ' <em>' + planet.name + '</em></h3>' +
+      const standNow = RS.contact.standingOf(game, planet, civ);
+      h += '<section><h3>' + civ.name + ' <em>' + planet.name + '</em></h3>' +
       '<div class="stats">' +
       '<div>Technology <b>' + civ.tier.name + '</b></div>' +
       '<div>Population <b>' + fmt(civ.population) + '</b></div>' +
@@ -16291,6 +16838,10 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       '<div>They know of you <b>' + (rec.awareness * 100).toFixed(0) + '%</b></div>' +
       '<div>Standing <b style="color:' + hsl(rec.standing >= 0 ? 135 : 0, 0.8, 0.68) + '">' +
         (rec.standing >= 0 ? '+' : '') + rec.standing.toFixed(2) + '</b></div>' +
+      (Math.abs(standNow - rec.standing) > 0.02
+        ? '<div>After rumours <b>' +
+          (standNow >= 0 ? '+' : '') + standNow.toFixed(2) + '</b></div>' : '') +
+      (c.relayed ? '<div>Channel <b>via relay</b></div>' : '') +
       '</div>';
 
     // ── the carrier ──
@@ -16316,7 +16867,11 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
         'The ' + carrier.band.name + ' layer needs more &phi; FOCUS to cohere.</p>';
     } else if (rec.awareness < 0.35) {
       h += '<p class="blurb">They have not noticed you yet. Stay in their system, ' +
-        'raise your reality field, or build something they can see.</p>';
+        'raise your reality field, build something they can see, or leave a probe.</p>';
+    }
+    if (RS.contact.hasRelay(game, planet) && !RS.contact.inPresence(game, planet)) {
+      h += '<p class="blurb">A relay is holding this channel from ' +
+        (planet.name || 'their world') + '. Keep φ on their carrier.</p>';
     }
 
     // ── what they say ──
@@ -16361,7 +16916,8 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
         '<em>standing ' + (r.standing >= 0 ? '+' : '') +
         r.standing.toFixed(2) + ' &middot; ' + r.exchanges + ' exchanges' +
         (r.taught.length ? ' &middot; taught you ' + r.taught.length : '') +
-        (r.uplifted ? ' &middot; uplifted &times;' + r.uplifted : '') + '</em></span></div>';
+        (r.uplifted ? ' &middot; uplifted &times;' + r.uplifted : '') +
+        (RS.contact.hasRelayKey(game, k) ? ' &middot; relay' : '') + '</em></span></div>';
     }
     return h + '</div></section>';
   }
@@ -16951,6 +17507,17 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       RS.audio.seat(0.2);
       RS.ui.toast({ kind: 'info', icon: '·', ms: 2400,
         title: 'Channel closed', body: 'You broke the carrier on ' + civ.name + '.' });
+    });
+
+    bus.on('contact:station', ({ planet }) => {
+      RS.audio.discover(0.7);
+      RS.feel.FX.discovery(320, 0.7);
+      RS.ui.toast({
+        kind: 'info', icon: '◈', hue: 320, ms: 4200,
+        title: 'PROBE STATIONED',
+        body: 'A sensor remains at ' + planet.name +
+          '. Hold their carrier from anywhere and the channel stays open.'
+      });
     });
 
     bus.on('settings', ({ key, value }) => {

@@ -54,6 +54,11 @@
   let bw = 0, bh = 0;
   let enabled = true;
 
+  /* Full-resolution world buffer. The display canvas is the composite
+   * target; this is what bloom *reads*. Capture never samples the canvas
+   * it is about to draw onto, which is the whole of the flush story. */
+  let world = null, wctx = null, ww = 0, wh = 0;
+
   function ensure(w, h) {
     const nw = Math.max(1, Math.round(w / DOWN));
     const nh = Math.max(1, Math.round(h / DOWN));
@@ -78,7 +83,7 @@
 
   /* `amount` 0..1 scales the whole effect, so a scope can bloom harder than
    * another and the transition can push it. */
-  /* ── Why the capture happens at the *top* of the frame ────────────────────
+  /* ── Why capture never samples the display ───────────────────────────────
    *
    * Measured, because the first version of this was four times slower than it
    * had any right to be. The individual steps cost, on a 320×215 buffer:
@@ -94,11 +99,13 @@
    * field queues a great deal — fifteen nodes laying down radial gradients
    * under 'lighter'. The bloom was not slow; it was waiting.
    *
-   * So the capture happens at the *start* of the frame instead, before the
-   * clear, when the canvas still holds the previous frame's finished image and
-   * nothing is queued on it — which is exactly the idle condition that measured
-   * zero. The glow is therefore one frame behind the thing making it, which at
-   * 60 Hz is 16 ms of latency on light spill and is not a thing anyone can see.
+   * So the world is drawn into an offscreen buffer, and capture reads *that*
+   * — never the canvas bloom is about to composite onto. Sampling a canvas
+   * that is also the composite target, with drawing queued on it, was the
+   * 16 ms flush. Reading a finished world buffer and blitting it is a copy,
+   * not a flush of the frame you are still building. The glow is in the
+   * same frame as the thing making it, and the attunement field gets the
+   * ~3 fps back.
    *
    * `STRIDE` then halves the remaining work again: bloom is low-frequency, and
    * the glow around a thing that moved two pixels is the same glow.
@@ -106,7 +113,41 @@
   const STRIDE = 2;
   let frame = 0, valid = false;
 
-  /* Called before the frame is cleared. Reads last frame's image. */
+  function ensureWorld(pw, ph) {
+    if (world && ww === pw && wh === ph && wctx) return true;
+    ww = pw; wh = ph;
+    valid = false;
+    if (!world) {
+      world = typeof OffscreenCanvas !== 'undefined'
+        ? new OffscreenCanvas(pw, ph) : document.createElement('canvas');
+    }
+    world.width = pw; world.height = ph;
+    wctx = world.getContext('2d');
+    return !!wctx;
+  }
+
+  /* Prepare the world buffer for this frame. The renderer draws into the
+   * returned context (CSS pixels, same dpr transform as the display). */
+  function begin(w, h, dpr) {
+    if (!enabled) return null;
+    const pw = Math.max(1, Math.round(w * (dpr || 1)));
+    const ph = Math.max(1, Math.round(h * (dpr || 1)));
+    if (!ensureWorld(pw, ph)) return null;
+    wctx.setTransform(dpr || 1, 0, 0, dpr || 1, 0, 0);
+    return { canvas: world, ctx: wctx };
+  }
+
+  function captureWorld(w, h, threshold) {
+    if (!enabled || !world) return;
+    capture(world, w, h, threshold);
+  }
+
+  function blit(ctx, w, h) {
+    if (!world) return;
+    ctx.drawImage(world, 0, 0, ww, wh, 0, 0, w, h);
+  }
+
+  /* Called on a finished source. Reads that image into the bloom buffer. */
   function capture(canvas, w, h, threshold) {
     if (!enabled) return;
     if (!ensure(w, h)) return;
@@ -172,9 +213,16 @@
    * `main.start`.
    */
   function warm(ctx, canvas, w, h) {
-    if (!ensure(w, h)) return false;
+    const dpr = (canvas && canvas.width && w) ? canvas.width / Math.max(1, w) : 1;
+    if (!begin(w, h, dpr) && !ensure(w, h)) return false;
+    if (wctx) {
+      wctx.setTransform(1, 0, 0, 1, 0, 0);
+      wctx.fillStyle = '#03050a';
+      wctx.fillRect(0, 0, ww, wh);
+    }
     for (let i = 0; i <= STRIDE; i++) {
-      capture(canvas, w, h, 0.5);
+      if (world) capture(world, w, h, 0.5);
+      else capture(canvas, w, h, 0.5);
       composite(ctx, w, h, 0.005);
     }
     valid = false;
@@ -184,5 +232,8 @@
   function setEnabled(on) { enabled = !!on; valid = false; }
   function isEnabled() { return enabled; }
 
-  RS.bloom = { DOWN, PASSES, STRIDE, capture, composite, warm, setEnabled, isEnabled };
+  RS.bloom = {
+    DOWN, PASSES, STRIDE, capture, captureWorld, composite, blit, begin, warm,
+    setEnabled, isEnabled
+  };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));

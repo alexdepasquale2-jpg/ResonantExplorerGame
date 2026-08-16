@@ -39,6 +39,28 @@
     return a.sx + ',' + a.sy + ',' + a.index + ',' + planet.bodyIndex;
   }
 
+  function parsePlanetKey(key) {
+    if (!key) return null;
+    const p = String(key).split(',');
+    if (p.length !== 4) return null;
+    const sx = +p[0], sy = +p[1], index = +p[2], bodyIndex = +p[3];
+    if (![sx, sy, index, bodyIndex].every(Number.isFinite)) return null;
+    return { sx, sy, index, bodyIndex };
+  }
+
+  /* Re-derive a world from a stored address. Cheap, and the only way a
+   * relationship record can talk about a neighbour without keeping a copy of
+   * that neighbour around. */
+  function planetFromKey(game, key) {
+    const a = parsePlanetKey(key);
+    if (!a) return null;
+    const sys = RS.stellar.systemAt(game.seed, a.sx, a.sy, a.index);
+    if (!sys || !sys.bodies[a.bodyIndex] || sys.bodies[a.bodyIndex].kind !== 'planet') return null;
+    const p = RS.planet.planetAt(sys, a.bodyIndex);
+    if (p) applyTo(game, p);
+    return p;
+  }
+
   /* ── Structures ───────────────────────────────────────────────────────────
    * `effect` names which derived quantity the structure biases. All of them
    * are rates, ceilings or radii — never absolute values. */
@@ -403,7 +425,8 @@
 
   RS.influence = {
     STRUCTURES, STRUCT_BY_ID, RESEARCH, RESEARCH_BY_ID,
-    planetKey, isResearched, researchAvailable, tryResearch,
+    planetKey, parsePlanetKey, planetFromKey,
+    isResearched, researchAvailable, tryResearch,
     canPlace, place, structuresOn, totalUpkeep, structureCount,
     express, expressionOn, EXPRESSION_ID, EXPRESSION_CAP, EXPRESSION_SCALE,
     applyTo, passiveFrom, recomputeFields, reachRadius

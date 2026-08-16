@@ -354,7 +354,8 @@
           Math.round(st.strain * 100) + '%</span>' : '') +
       (st.holdMass > 0 ? '<span class="bb-tag">' + fmt(st.holdMass) + 'u</span>' : '') +
       (st.possession != null ? '<span class="bb-tag" style="color:#f0abfc" ' +
-        'title="how much of this mind is you">' + (st.possession * 100).toFixed(0) + '% you</span>' : '') +
+        'title="how much of this ' + (st.ridingCiv ? 'culture' : 'mind') + ' is you">' +
+        (st.possession * 100).toFixed(0) + '% you</span>' : '') +
       '<span class="bb-dials">' +
         dial('τ', 43, dm.time) + dial('Σ', 338, dm.space) +
         dial('Δ', 268, dm.phase) + dial('φ', 187, dm.frequency) +
@@ -1223,7 +1224,8 @@
     const carrier = lock.carrier;
     let h = '';
 
-    h += '<section><h3>' + civ.name + ' <em>' + planet.name + '</em></h3>' +
+      const standNow = RS.contact.standingOf(game, planet, civ);
+      h += '<section><h3>' + civ.name + ' <em>' + planet.name + '</em></h3>' +
       '<div class="stats">' +
       '<div>Technology <b>' + civ.tier.name + '</b></div>' +
       '<div>Population <b>' + fmt(civ.population) + '</b></div>' +
@@ -1232,6 +1234,10 @@
       '<div>They know of you <b>' + (rec.awareness * 100).toFixed(0) + '%</b></div>' +
       '<div>Standing <b style="color:' + hsl(rec.standing >= 0 ? 135 : 0, 0.8, 0.68) + '">' +
         (rec.standing >= 0 ? '+' : '') + rec.standing.toFixed(2) + '</b></div>' +
+      (Math.abs(standNow - rec.standing) > 0.02
+        ? '<div>After rumours <b>' +
+          (standNow >= 0 ? '+' : '') + standNow.toFixed(2) + '</b></div>' : '') +
+      (c.relayed ? '<div>Channel <b>via relay</b></div>' : '') +
       '</div>';
 
     // ── the carrier ──
@@ -1257,7 +1263,11 @@
         'The ' + carrier.band.name + ' layer needs more &phi; FOCUS to cohere.</p>';
     } else if (rec.awareness < 0.35) {
       h += '<p class="blurb">They have not noticed you yet. Stay in their system, ' +
-        'raise your reality field, or build something they can see.</p>';
+        'raise your reality field, build something they can see, or leave a probe.</p>';
+    }
+    if (RS.contact.hasRelay(game, planet) && !RS.contact.inPresence(game, planet)) {
+      h += '<p class="blurb">A relay is holding this channel from ' +
+        (planet.name || 'their world') + '. Keep φ on their carrier.</p>';
     }
 
     // ── what they say ──
@@ -1302,7 +1312,8 @@
         '<em>standing ' + (r.standing >= 0 ? '+' : '') +
         r.standing.toFixed(2) + ' &middot; ' + r.exchanges + ' exchanges' +
         (r.taught.length ? ' &middot; taught you ' + r.taught.length : '') +
-        (r.uplifted ? ' &middot; uplifted &times;' + r.uplifted : '') + '</em></span></div>';
+        (r.uplifted ? ' &middot; uplifted &times;' + r.uplifted : '') +
+        (RS.contact.hasRelayKey(game, k) ? ' &middot; relay' : '') + '</em></span></div>';
     }
     return h + '</div></section>';
   }
