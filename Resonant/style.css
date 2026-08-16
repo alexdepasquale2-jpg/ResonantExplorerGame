@@ -1,0 +1,642 @@
+/* Resonant — styling.
+ *
+ * The DOM layer is deliberately quiet. The canvas is doing the expressive work
+ * and the text around it exists to be read at a glance mid-gesture, so it is
+ * monospace, small, low-contrast until it matters, and absolutely still until
+ * it changes. The only animated DOM is the pop on a changed number and the
+ * toast stack — everything else that moves, moves on canvas.
+ *
+ * Layout is pointer-transparent by default: #app does not accept events, and
+ * only the specific controls opt back in. The HUD canvas underneath owns every
+ * gesture, so a stray tap near a readout still reaches the dial behind it.
+ */
+
+:root {
+  --bg: #03050a;
+  --ink: #dce7f7;
+  --dim: #7f92ad;
+  --dimmer: #4d5c73;
+  --line: rgba(140, 175, 220, 0.14);
+  --panel: rgba(8, 13, 22, 0.86);
+  --accent: #7dd3fc;
+  --warn: #fca5a5;
+  --good: #86efac;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  margin: 0; padding: 0;
+  width: 100%; height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--mono);
+  overflow: hidden;
+  overscroll-behavior: none;
+  /* Text selection during a dial drag looks broken and blocks the gesture. */
+  user-select: none; -webkit-user-select: none;
+  touch-action: none;
+}
+
+canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+#field { z-index: 1; }
+#hud   { z-index: 2; touch-action: none; }
+
+#app {
+  position: fixed; inset: 0; z-index: 3;
+  pointer-events: none;
+  display: flex; flex-direction: column;
+  /* --hud-h is published by hud.js and is the height of the instrument
+     cluster. Reserving it keeps the bottom-anchored readouts clear of the
+     dials on every viewport without hard-coding a number that would be wrong
+     on the next screen size. */
+  padding: calc(var(--safe-t) + 8px) 10px calc(var(--hud-h, 190px) + 4px);
+}
+
+/* ── topbar ───────────────────────────────────────────────────────────── */
+
+#topbar {
+  display: flex; align-items: center; gap: 10px;
+  flex-wrap: nowrap; min-width: 0;
+}
+.res { flex: 0 0 auto; }
+
+.res { display: flex; align-items: baseline; gap: 5px; }
+.res .sym { color: var(--accent); font-size: 13px; opacity: .85; }
+.res .val { font-size: 19px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.res.small .val { font-size: 14px; font-weight: 600; }
+.res .rate { font-size: 10px; color: var(--dim); }
+.res.small .sym { color: #c4b5fd; }
+
+/* One-shot scale pop when a number changes. Short and slight — a big bouncy
+ * counter is distracting when it updates several times a second. */
+.pop { animation: pop .22s cubic-bezier(.2, 1.6, .4, 1); }
+@keyframes pop { 0% { transform: scale(1.22); } 100% { transform: scale(1); } }
+
+#progress { flex: 1 1 auto; display: flex; align-items: center; gap: 6px; min-width: 0; }
+#progress-bar {
+  flex: 1; height: 3px; border-radius: 2px;
+  background: rgba(140, 175, 220, 0.14); overflow: hidden;
+}
+#progress-fill {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, #38bdf8, #c084fc, #f0abfc);
+  transition: width .5s cubic-bezier(.2, .8, .3, 1);
+}
+#progress-pct { font-size: 10px; color: var(--dim); font-variant-numeric: tabular-nums; }
+
+/* Five tool buttons plus two resource readouts plus a progress bar do not fit
+ * across a 430px phone. The tools are the only part that must never wrap or
+ * clip, so they hold their size and the progress bar yields instead. */
+#tools { display: flex; gap: 4px; pointer-events: auto; flex: 0 0 auto; }
+.tool {
+  width: 28px; height: 28px; border-radius: 8px;
+  background: var(--panel); border: 1px solid var(--line);
+  color: var(--dim); font-size: 14px; cursor: pointer;
+  display: grid; place-items: center;
+  transition: color .16s, border-color .16s, transform .1s;
+}
+.tool:hover { color: var(--ink); border-color: rgba(140, 175, 220, 0.32); }
+.tool:active { transform: scale(.92); }
+
+/* ── context strip ────────────────────────────────────────────────────── */
+
+#context {
+  margin-top: 6px;
+  display: flex; flex-direction: column; gap: 3px;
+  max-width: 460px;
+}
+.ctx-tier span, .ctx-layer span {
+  font-size: 11px; font-weight: 700; letter-spacing: .13em;
+}
+.ctx-tier span { color: #f0abfc; }
+.ctx-tier em, .ctx-layer em {
+  font-style: normal;
+  font-size: 10px; line-height: 1.35; color: var(--dimmer); margin-top: 1px;
+  max-width: 44ch;
+  /* Clamped: the context block sits directly above the toast stack, so its
+     height has to be bounded or toasts land on top of it. Two lines for the
+     scale note, one for the layer rule. */
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ctx-layer em { -webkit-line-clamp: 2; }
+/* Seven tool buttons on a 430px phone: let them shrink rather than clip. */
+#tools { flex-wrap: nowrap; }
+@media (max-width: 470px) { #tools .tool { width: 25px; height: 25px; font-size: 11px; } }
+
+/* ── node readout ─────────────────────────────────────────────────────── */
+
+#readout {
+  margin-top: auto;
+  align-self: flex-start;
+  min-width: 200px; max-width: 320px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 9px 11px;
+  backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px);
+}
+.ro-empty { font-size: 10px; color: var(--dimmer); }
+.ro-head { display: flex; align-items: center; gap: 7px; }
+.ro-glyph { font-size: 16px; }
+.ro-title { font-size: 12px; font-weight: 700; letter-spacing: .02em; }
+.ro-sub { font-size: 9.5px; color: var(--dim); margin-top: 1px; }
+.ro-block { font-size: 9.5px; color: var(--warn); margin-top: 5px; }
+
+.ro-axes { display: flex; gap: 5px; margin-top: 7px; }
+/* Each axis is a labelled fill bar plus a direction arrow. The arrow is the
+ * important part: it says which way to turn, which is the difference between a
+ * four-dial lock being a puzzle and being a guess. */
+.ax {
+  flex: 1; position: relative;
+  font-size: 9px; color: var(--dimmer);
+  border: 1px solid rgba(140, 175, 220, 0.16);
+  border-radius: 5px; padding: 2px 4px 3px;
+  overflow: hidden;
+}
+.ax b {
+  position: absolute; left: 0; bottom: 0; height: 2px;
+  background: hsl(var(--h), 85%, 62%);
+  transition: width .1s linear;
+}
+.ax i { float: right; font-style: normal; opacity: .75; }
+.ax.good { color: hsl(var(--h), 85%, 74%); border-color: hsl(var(--h), 60%, 50%); }
+.ax.off { opacity: .3; }
+
+#beat-hint {
+  align-self: flex-start;
+  font-size: 9.5px; color: var(--accent);
+  margin-top: 5px; opacity: 0;
+  transition: opacity .3s;
+  letter-spacing: .04em;
+}
+
+#objective {
+  align-self: flex-start;
+  font-size: 10px; color: var(--dim);
+  margin-top: 5px; max-width: 46ch; line-height: 1.45;
+}
+
+/* ── toasts ───────────────────────────────────────────────────────────── */
+
+#toasts {
+  /* Top-right, out of the world entirely. They used to be centred and three
+     deep, which put a wall of cards directly over the thing they were about —
+     and a notification that hides what it is describing is worse than none.
+     Nothing here is load-bearing: every message restates something the
+     readout, the objective line or the guide also says. */
+  position: fixed; top: calc(var(--safe-t) + 46px); right: 10px;
+  display: flex; flex-direction: column; gap: 5px; align-items: flex-end;
+  width: min(74vw, 264px); z-index: 5;
+  pointer-events: none;
+}
+.toast {
+  --h: 200;
+  display: flex; gap: 7px; align-items: flex-start;
+  /* Translucent rather than near-opaque: the world should stay legible
+     *through* a notification, which is most of why these stopped feeling like
+     an interruption. */
+  background: rgba(7, 11, 19, 0.72);
+  border: 1px solid hsla(var(--h), 60%, 60%, .22);
+  border-left: 2px solid hsla(var(--h), 80%, 62%, .8);
+  border-radius: 8px; padding: 6px 9px;
+  max-width: 100%;
+  backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px);
+  animation: toast-in .28s cubic-bezier(.2, 1.3, .35, 1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .38);
+}
+.toast.out { animation: toast-out .4s ease forwards; }
+.toast i { font-style: normal; font-size: 13px; color: hsl(var(--h), 85%, 70%); line-height: 1.1; }
+.toast b { display: block; font-size: 10px; letter-spacing: .05em; }
+.toast em { display: block; font-style: normal; font-size: 9px; color: var(--dim); margin-top: 2px; line-height: 1.38; }
+.toast.major { border-left-width: 3px; }
+.toast.major b { font-size: 11.5px; }
+.toast.gnosis { border-left-color: #f0abfc; }
+.toast.warn { border-left-color: var(--warn); }
+.toast.seat { padding: 5px 10px; opacity: .9; }
+.toast.seat b { font-size: 9.5px; }
+
+/* Slide in from the edge they live on rather than dropping from above — a
+   card that moves toward the middle of the screen reads as demanding
+   attention, and one that slides in from the margin does not. */
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(14px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes toast-out {
+  to { opacity: 0; transform: translateX(10px); }
+}
+
+/* ── drawer ───────────────────────────────────────────────────────────── */
+
+#drawer {
+  position: fixed; top: 0; right: 0; bottom: 0;
+  width: min(94vw, 430px);
+  background: rgba(5, 9, 16, 0.96);
+  border-left: 1px solid var(--line);
+  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  transform: translateX(101%);
+  transition: transform .34s cubic-bezier(.3, .9, .25, 1);
+  z-index: 6; pointer-events: auto;
+  display: flex; flex-direction: column;
+  padding-top: var(--safe-t);
+}
+#drawer.open { transform: none; }
+#drawer header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 14px; border-bottom: 1px solid var(--line);
+}
+#drawer h2 { margin: 0; font-size: 11px; letter-spacing: .18em; color: var(--dim); font-weight: 700; }
+#btn-drawer-close {
+  background: none; border: none; color: var(--dim);
+  font-size: 15px; cursor: pointer; padding: 4px 8px;
+}
+#drawer-body {
+  flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding: 12px 14px calc(var(--safe-b) + 24px);
+  touch-action: pan-y;
+}
+
+/* upgrades */
+.up-dial { --h: 200; margin-bottom: 20px; }
+.up-dial header { display: flex; align-items: baseline; gap: 8px; padding: 0 0 4px; border: none; }
+.up-dial .sym { font-size: 17px; color: hsl(var(--h), 80%, 68%); }
+.up-dial h3 { margin: 0; font-size: 12px; letter-spacing: .1em; }
+.up-dial .reach { margin-left: auto; font-size: 9px; color: var(--dimmer); }
+.up-dial .blurb { margin: 0 0 7px; font-size: 9.5px; color: var(--dimmer); line-height: 1.45; }
+.up-rows { display: flex; flex-direction: column; gap: 4px; }
+.up-row {
+  display: grid;
+  grid-template-columns: 62px 26px 1fr auto;
+  align-items: center; gap: 7px;
+  width: 100%; text-align: left;
+  background: rgba(255, 255, 255, .022);
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 7px 9px; cursor: pointer; color: var(--ink);
+  font-family: var(--mono);
+  transition: background .14s, border-color .14s, transform .08s;
+}
+.up-row:hover:not(:disabled) { background: hsla(var(--h), 60%, 50%, .1); border-color: hsla(var(--h), 60%, 55%, .4); }
+.up-row:active:not(:disabled) { transform: scale(.985); }
+.up-row:disabled { opacity: .38; cursor: default; }
+.up-row.na { opacity: .3; cursor: default; }
+.up-row .k { font-size: 9px; letter-spacing: .1em; color: hsl(var(--h), 70%, 70%); }
+.up-row .lv { font-size: 9px; color: var(--dim); text-align: center; }
+.up-row .d { font-size: 9px; color: var(--dimmer); line-height: 1.3; }
+.up-row .c { font-size: 10px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+
+/* codex */
+#drawer-body section { margin-bottom: 22px; }
+#drawer-body h3 {
+  margin: 0 0 6px; font-size: 10px; letter-spacing: .14em; color: var(--dim);
+  display: flex; justify-content: space-between; align-items: baseline;
+}
+#drawer-body h3 em { font-style: normal; font-size: 9px; color: var(--dimmer); }
+#drawer-body .blurb { margin: 0 0 8px; font-size: 9.5px; color: var(--dimmer); line-height: 1.5; }
+
+.ess-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(122px, 1fr)); gap: 5px; }
+.ess {
+  background: rgba(255, 255, 255, .022); border: 1px solid var(--line);
+  border-radius: 8px; padding: 7px 8px;
+  display: grid; grid-template-columns: auto 1fr auto; gap: 3px 6px; align-items: center;
+}
+.ess.unknown { opacity: .28; }
+.ess .g { font-size: 14px; color: #f0abfc; }
+.ess .n { font-size: 10px; font-weight: 700; }
+.ess .lv { font-size: 9px; color: var(--accent); }
+.ess .t { grid-column: 1 / -1; font-size: 8.5px; color: var(--dimmer); line-height: 1.35; }
+.ess .b { grid-column: 1 / -1; font-size: 8.5px; color: var(--good); }
+
+.list { display: flex; flex-direction: column; gap: 3px; }
+.row {
+  --h: 200;
+  display: grid; grid-template-columns: 20px 1fr; gap: 4px 8px;
+  padding: 6px 8px; border-radius: 7px;
+  background: rgba(255, 255, 255, .018); border: 1px solid var(--line);
+}
+.row.dim { opacity: .4; }
+.row .g { font-size: 12px; color: hsl(var(--h), 75%, 68%); }
+.row .n { font-size: 10px; font-weight: 700; }
+.row .n b { font-size: 8px; color: #f0abfc; letter-spacing: .1em; }
+.row .n em { display: block; font-style: normal; font-size: 8.5px; color: var(--dimmer); font-weight: 400; }
+.row .d { grid-column: 2; font-size: 8.5px; color: var(--dimmer); line-height: 1.4; }
+
+/* settings */
+.set-row {
+  display: grid; grid-template-columns: 90px 1fr 32px;
+  align-items: center; gap: 8px; width: 100%; text-align: left;
+  background: rgba(255, 255, 255, .022); border: 1px solid var(--line);
+  border-radius: 8px; padding: 9px; margin-bottom: 5px;
+  cursor: pointer; color: var(--ink); font-family: var(--mono);
+}
+.set-row .k { font-size: 10px; font-weight: 700; }
+.set-row .d { font-size: 8.5px; color: var(--dimmer); line-height: 1.35; }
+.set-row .cyc {
+  font-size: 9px; letter-spacing: .1em; padding: 3px 7px; border-radius: 5px;
+  border: 1px solid var(--line); color: var(--ink); opacity: .85; align-self: center;
+}
+.set-row .sw {
+  width: 28px; height: 16px; border-radius: 8px;
+  background: rgba(140, 175, 220, .2); position: relative;
+  transition: background .18s;
+}
+.set-row .sw::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--dim); transition: transform .18s, background .18s;
+}
+.set-row .sw.on { background: rgba(56, 189, 248, .35); }
+.set-row .sw.on::after { transform: translateX(12px); background: var(--accent); }
+
+.stats { margin-top: 16px; }
+.stats div { font-size: 9.5px; color: var(--dimmer); display: flex; justify-content: space-between; padding: 3px 0; }
+.stats b { color: var(--ink); font-weight: 700; }
+
+/* ── boot ─────────────────────────────────────────────────────────────── */
+
+#boot {
+  position: fixed; inset: 0; z-index: 20;
+  display: grid; place-items: center;
+  background: radial-gradient(ellipse at 50% 45%, #0b1424 0%, #03050a 70%);
+  transition: opacity .6s ease, visibility .6s;
+  padding: 24px;
+}
+#boot.gone { opacity: 0; visibility: hidden; pointer-events: none; }
+.boot-inner { text-align: center; max-width: 420px; }
+#boot h1 {
+  margin: 0 0 14px; font-size: clamp(28px, 9vw, 46px);
+  letter-spacing: .32em; font-weight: 300; color: #e6f0ff;
+  text-shadow: 0 0 34px rgba(125, 211, 252, .45);
+}
+#boot .tag { font-size: 11px; line-height: 1.75; color: var(--dim); margin: 0 0 16px; }
+#boot .tag.dim { color: var(--dimmer); font-size: 10px; }
+#boot .tag.tiny { font-size: 9px; color: var(--dimmer); margin-top: 18px; }
+.boot-dials { display: flex; justify-content: center; gap: 16px; margin: 0 0 18px; }
+.boot-dials span { font-size: 8.5px; color: var(--dimmer); letter-spacing: .1em; }
+.boot-dials b {
+  display: block; font-size: 19px; color: var(--accent);
+  margin-bottom: 3px; font-weight: 400;
+}
+.boot-btns { display: flex; gap: 9px; justify-content: center; }
+#boot button {
+  background: rgba(125, 211, 252, .1);
+  border: 1px solid rgba(125, 211, 252, .38);
+  color: #cbe7ff; font-family: var(--mono);
+  font-size: 11px; letter-spacing: .18em;
+  padding: 12px 26px; border-radius: 10px; cursor: pointer;
+  transition: background .18s, transform .1s, box-shadow .18s;
+}
+#boot button:hover { background: rgba(125, 211, 252, .2); box-shadow: 0 0 26px rgba(125, 211, 252, .22); }
+#boot button:active { transform: scale(.96); }
+#boot button.hidden { display: none; }
+
+@media (max-width: 400px) {
+  .ctx-tier em, .ctx-layer em { display: none; }
+  #readout { max-width: 250px; }
+}
+
+/* Honour the OS-level preference as a starting point; the in-game toggle can
+ * still override it either way. */
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation-duration: .01ms; }
+  .pop { animation: none; }
+}
+
+/* ── solar layer additions ────────────────────────────────────────────────
+ *
+ * The scene tag and the body bar exist for one reason: the four dials mean
+ * different things in different modes, and the player must never be uncertain
+ * which mode they are in. So the mode is stated in words, in a fixed place,
+ * in a colour that changes — cyan when observing, warm when piloting.
+ */
+
+#scene-tag {
+  margin-top: 8px;
+  font-size: 9px; letter-spacing: .2em; font-weight: 700;
+  color: var(--accent);
+  transition: color .3s;
+}
+
+#body-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  pointer-events: auto;
+  margin-top: auto; margin-bottom: 6px;
+  align-self: flex-start;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 6px 10px;
+  opacity: 0;
+  transition: opacity .3s;
+  backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px);
+  max-width: 92vw;
+}
+#body-bar:empty { display: none; }
+.bb-glyph { font-size: 14px; }
+.bb-name { font-size: 10px; font-weight: 700; letter-spacing: .04em; }
+.bb-meter {
+  width: 56px; height: 4px; border-radius: 2px;
+  background: rgba(140, 175, 220, .2); overflow: hidden; position: relative;
+}
+.bb-meter b { position: absolute; inset: 0 auto 0 0; display: block; transition: width .2s linear; }
+.bb-tag { font-size: 9px; color: var(--dim); }
+.bb-warn {
+  font-size: 9px; color: var(--warn); flex-basis: 100%;
+  display: flex; align-items: center; gap: 5px;
+}
+.bb-fix {
+  font: inherit; font-size: 9px; letter-spacing: .04em;
+  background: hsla(40, 80%, 60%, .16); color: hsl(40, 85%, 72%);
+  border: 1px solid hsla(40, 80%, 60%, .4); border-radius: 5px;
+  padding: 2px 6px; cursor: pointer; pointer-events: auto;
+}
+.bb-fix:hover { background: hsla(40, 80%, 60%, .28); }
+
+.bb-head {
+  display: flex; align-items: center; gap: 6px;
+  background: none; border: 0; padding: 0; cursor: pointer;
+  color: inherit; font: inherit; pointer-events: auto;
+}
+.bb-head:hover .bb-name { color: #fff; }
+
+/* The dial map, live. Every body reinterprets the same four controls, and
+   until this existed the only place that mapping appeared was a drawer you had
+   to close in order to fly. */
+.bb-dials { display: flex; gap: 7px; flex-wrap: wrap; }
+.bb-dial {
+  --h: 200;
+  display: inline-flex; align-items: baseline; gap: 3px;
+  font-size: 8.5px; color: var(--dim); white-space: nowrap;
+}
+.bb-dial b {
+  font-size: 10px; font-weight: 400; color: hsl(var(--h), 70%, 70%);
+}
+@media (max-width: 560px) {
+  /* On a phone the bar is competing with the world for a narrow column, so the
+     dial map drops to the two controls that differ most between bodies. */
+  .bb-dial:nth-child(n+3) { display: none; }
+}
+
+/* The readout is the anchor for the bottom-left column; once the body bar
+ * takes the auto margin, the readout must not also claim it. */
+#body-bar + #readout { margin-top: 0; }
+
+/* Drawer rows in the world panel carry more text than the dial rows they
+ * share a class with, so let the description column breathe. */
+.up-row .d b { color: var(--ink); font-weight: 700; }
+.up-row .d i { font-style: normal; font-size: 8px; }
+.up-row .c { font-size: 9px; max-width: 96px; text-align: right; line-height: 1.25; }
+
+@media (max-width: 430px) {
+  #tools .tool { width: 26px; height: 26px; font-size: 12px; }
+  .bb-meter { width: 40px; }
+  /* The progress bar is the least load-bearing thing up here; it goes first
+     so the tool buttons never clip off the edge. */
+  #progress-bar { display: none; }
+  .res .rate { display: none; }
+}
+
+/* ── contact ──────────────────────────────────────────────────────────────
+ *
+ * A civilisation in earshot is the rarest event in the game. The button
+ * announces itself rather than waiting to be found, and the hint line states
+ * the carrier frequency outright — a player who has found one and not noticed
+ * would be the worst failure this design could have.
+ */
+
+#btn-contact { display: none; }
+#btn-contact.live {
+  display: grid;
+  border-color: currentColor;
+  animation: contact-pulse 2.4s ease-in-out infinite;
+}
+@keyframes contact-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 currentColor; opacity: .85; }
+  50% { box-shadow: 0 0 10px 0 currentColor; opacity: 1; }
+}
+
+#contact-hint {
+  align-self: flex-start;
+  margin-top: auto; margin-bottom: 4px;
+  font-size: 10px; font-weight: 700; letter-spacing: .04em;
+  opacity: 0; transition: opacity .35s;
+  background: var(--panel);
+  border: 1px solid currentColor;
+  border-radius: 8px; padding: 4px 9px;
+}
+#contact-hint:empty { display: none; }
+/* Once the contact hint claims the auto margin, the blocks under it must not. */
+#contact-hint + #body-bar { margin-top: 0; }
+
+/* What they say, set apart from the instrument text — this is the only voice
+   in the game that is not the game describing itself. */
+.say {
+  border-left: 2px solid rgba(240, 171, 252, .45);
+  padding: 2px 0 2px 9px; margin: 4px 0 0;
+}
+.say p {
+  margin: 0 0 5px; font-size: 10px; line-height: 1.5;
+  color: #cdd9ec; font-style: italic;
+}
+.say p:last-child { margin-bottom: 0; }
+
+
+/* ── the essence sheet ─────────────────────────────────────────────────────
+ *
+ * The player's map of the generative core. Four axes per essence, drawn as
+ * bars so the *shape* of an essence is recognisable at a glance — and blanks
+ * where an axis has not been read yet, because what you do not know is itself
+ * information worth seeing.
+ */
+.ess-sheet { display: flex; flex-direction: column; gap: 3px; }
+.ess-row {
+  display: grid;
+  grid-template-columns: 18px 1fr auto auto;
+  grid-template-areas: "g n ax ct" ". f f f";
+  align-items: center; gap: 4px 8px;
+  padding: 6px 8px; border-radius: 7px;
+  background: rgba(140, 175, 220, .045);
+  border: 1px solid transparent;
+}
+.ess-row.unknown { opacity: .38; }
+.ess-row .eg { grid-area: g; font-size: 13px; text-align: center; }
+.ess-row .en { grid-area: n; font-size: 10.5px; min-width: 0; }
+.ess-row .en em {
+  display: block; font-style: normal; font-size: 8.5px;
+  color: var(--dim); line-height: 1.35; margin-top: 1px;
+}
+.ess-row .eax { grid-area: ax; display: flex; gap: 3px; }
+.ess-row .ect {
+  grid-area: ct; font-size: 9px; color: var(--dim); text-align: right; min-width: 44px;
+}
+.ess-row .ect em { display: block; font-style: normal; font-size: 8px; opacity: .7; }
+.ess-row .ef {
+  grid-area: f; font-size: 8px; color: var(--dim); opacity: .6;
+  padding-left: 26px; line-height: 1.4;
+}
+
+/* One axis. The letter is always there so the row reads the same whether the
+   value is known or not — only the bar appears. */
+.ess-row .ax {
+  --h: 200;
+  position: relative; width: 34px; height: 13px;
+  border-radius: 3px; overflow: hidden;
+  background: rgba(140, 175, 220, .12);
+  display: flex; align-items: center; justify-content: center;
+}
+.ess-row .ax.blank {
+  background: repeating-linear-gradient(45deg,
+    rgba(140, 175, 220, .05) 0 3px, rgba(140, 175, 220, .11) 3px 6px);
+}
+.ess-row .ax b {
+  position: relative; z-index: 1;
+  font-size: 8px; font-weight: 700; letter-spacing: .04em;
+  color: hsl(var(--h), 60%, 78%);
+}
+.ess-row .ax.blank b { color: rgba(160, 185, 215, .4); }
+.ess-row .ax i {
+  position: absolute; inset: 0 auto 0 0; display: block;
+  background: hsla(var(--h), 70%, 58%, .5);
+}
+
+@media (max-width: 460px) {
+  /* On a phone the sheet drops the form names and tightens the bars; the axes
+     are the part that has to survive. */
+  .ess-row .ef { display: none; }
+  .ess-row .ax { width: 26px; }
+}
+
+
+/* ── the drawer's tab row ──────────────────────────────────────────────────
+ *
+ * Seven topbar buttons became one. On a phone they were already competing with
+ * the insight readout for the same strip, and every new panel added another —
+ * so the panels moved inside the drawer they all open into, which is where a
+ * player is already looking when they want a different one.
+ */
+#drawer-tabs {
+  display: flex; gap: 2px; padding: 0 10px 8px;
+  overflow-x: auto; scrollbar-width: none;
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+#drawer-tabs::-webkit-scrollbar { display: none; }
+#drawer-tabs button {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  background: none; border: 0; border-radius: 7px;
+  padding: 6px 9px; cursor: pointer;
+  font: inherit; font-size: 8.5px; letter-spacing: .05em;
+  color: var(--dim); white-space: nowrap;
+  border-bottom: 2px solid transparent;
+}
+#drawer-tabs button span { font-size: 13px; line-height: 1; }
+#drawer-tabs button:hover { color: var(--ink); background: rgba(140, 175, 220, .07); }
+#drawer-tabs button.on {
+  color: var(--ink);
+  border-bottom-color: hsl(190, 70%, 60%);
+  background: rgba(140, 175, 220, .09);
+}
