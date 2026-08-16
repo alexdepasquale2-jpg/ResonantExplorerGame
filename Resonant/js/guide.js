@@ -100,6 +100,7 @@
     { g: '◎', name: 'Reach ring', what: 'On the map: the edge of your consciousness field. Inside it, stars are places; outside, lights.' },
     { g: '○', name: 'Green ring', what: 'On the map: that system holds life.' },
     { g: '◍', name: 'Amber pulse', what: 'On the map: that system is inhabited. This is the rarest marker in the game.' },
+    { g: '▣', name: 'World pulse', what: 'Tap a planet to survey the patch under the reticle. Pays Ψ; diminishes per world, never a cell map.' },
     { g: '⌇', name: 'Ghost layer', what: 'A band you can see and cannot hold. Buy φ FOCUS.' },
     { g: '⊘', name: 'Dashed ring', what: 'On a node: blocked. On the map: charted by somebody else, not by you.' }
   ];
@@ -121,10 +122,12 @@
       '<div>Next <b>' + RS.game.sceneObjective(game).text.slice(0, 46) + '</b></div>' +
       '</div></section>';
 
-    if (game.inhabiting && sc.kind === 'planet') {
+    if (sc.kind === 'planet') {
       h += '<section><h3>Two cameras, one sphere</h3>' +
         '<p class="blurb">Near the ground is the side-on slice. Climb, tap the scene tag, ' +
-        'or press <b>C</b> for the neighbourhood map. Pose is shared — switching never teleports.</p></section>';
+        'or press <b>C</b> for the neighbourhood map. Pose is shared — switching never teleports. ' +
+        'Tap the ground to <b>pulse</b> a seam (the field\'s strike, on a world). ' +
+        'A sited extractor actually pays idle Ψ from that world\'s richest resource.</p></section>';
     }
     if (game.inhabiting && RS.vessel.archOf(game.body).id === 'symbiont') {
       h += '<section><h3>Riding a mind</h3>' +
@@ -367,6 +370,10 @@
     if (open.length) {
       const cheap = open.reduce((a, b) => (a.cost < b.cost ? a : b));
       return 'Research ' + cheap.name + ' (' + fmt(cheap.cost) + ' Ψ) — ' + cheap.blurb;
+    }
+    if (game.structuresUnlocked.extractor && !Object.keys(game.deltas).some(k =>
+        game.deltas[k].some(d => d.id === 'extractor'))) {
+      return 'Site a seam extractor. It is the only structure that pays idle Ψ, scaled by the ore under it.';
     }
     if (!RS.influence.structureCount(game)) return 'Site your first structure on a world you care about.';
     return 'Raise the consciousness field with beacons to reach further stars.';

@@ -177,8 +177,13 @@
       const act = ev.target.closest('[data-act]');
       if (act) {
         const kind = act.dataset.act;
-        const r = kind === 'extract' ? RS.scenes.extract(game, bus) : RS.scenes.sell(game, bus);
-        if (!r.ok) bus.emit('ui:deny', { reason: 'blocked', message: r.reason });
+        const r = kind === 'extract' ? RS.scenes.extract(game, bus)
+          : kind === 'sell' ? RS.scenes.sell(game, bus)
+            : kind === 'pulse' ? RS.scenes.pulse(game, bus)
+              : { ok: false, reason: 'unknown action' };
+        if (!r.ok && r.reason !== 'cooling') {
+          bus.emit('ui:deny', { reason: 'blocked', message: r.reason });
+        }
         renderDrawer(game, bus);
       }
     });
@@ -1169,25 +1174,35 @@
     h += '</div>';
 
     // player actions available here
-    if (game.inhabiting) {
-      const arch = RS.vessel.archOf(game.body);
+    {
+      const rec = game.surveys && game.surveys[RS.influence.planetKey(p)];
+      const rich = RS.scenes.richnessAt(p, s.lon, s.lat);
       h += '<h3 style="margin-top:12px">Actions</h3><div class="up-rows">';
-      if (arch.extracts) {
-        h += '<button class="up-row" data-act="extract"><span class="k">EXTRACT</span><span class="lv">&#9660;</span>' +
-          '<span class="d">Take the richest local seam into your hold.</span><span class="c">8 chg</span></button>';
-      }
-      if (game.body.holdMass > 0) {
-        h += '<button class="up-row" data-act="sell"><span class="k">SELL</span><span class="lv">&#9650;</span>' +
-          '<span class="d">Convert your hold at local prices.</span><span class="c">' +
-          fmt(game.body.holdMass) + ' u</span></button>';
+      h += '<button class="up-row" data-act="pulse"><span class="k">PULSE</span><span class="lv">▣</span>' +
+        '<span class="d">Read this patch. Strike\'s cousin on a world — tap the ground, or here.</span>' +
+        '<span class="c">' + (rec && rec.work ? rec.work + ' reads' : '+' + fmt(0.4 + rich * 4.4) + ' Ψ') +
+        '</span></button>';
+      if (game.inhabiting) {
+        const arch = RS.vessel.archOf(game.body);
+        if (arch.extracts) {
+          h += '<button class="up-row" data-act="extract"><span class="k">EXTRACT</span><span class="lv">&#9660;</span>' +
+            '<span class="d">Take the richest local seam into your hold.</span><span class="c">8 chg</span></button>';
+        }
+        if (game.body.holdMass > 0) {
+          h += '<button class="up-row" data-act="sell"><span class="k">SELL</span><span class="lv">&#9650;</span>' +
+            '<span class="d">Convert your hold at local prices.</span><span class="c">' +
+            fmt(game.body.holdMass) + ' u</span></button>';
+        }
       }
       h += '</div>';
     }
 
     // structures
     const placed = RS.influence.structuresOn(game, p);
+    const exRate = RS.influence.extractorRate(game);
     h += '<h3 style="margin-top:12px">Structures <em>upkeep ' +
-      RS.influence.totalUpkeep(game).toFixed(1) + '/' + fmt(game.passiveRate) + '</em></h3>';
+      RS.influence.totalUpkeep(game).toFixed(1) + '/' + fmt(game.passiveRate) +
+      (exRate > 0.001 ? ' · seams +' + exRate.toFixed(2) + '/s' : '') + '</em></h3>';
     if (placed.length) {
       h += '<div class="list">';
       for (const x of placed) {

@@ -186,18 +186,22 @@
           const idx = pickBody(game, a.startX, a.startY);
           if (idx >= 0 && handlers && handlers.onPickBody) handlers.onPickBody(idx);
         } else if (scene.kind === 'planet') {
-          /* Tapping the globe picks a latitude to descend to. Embodied, the
-           * same tap cycles SIDE-ON / MAP / AUTO — altitude still switches
-           * when the tag reads AUTO. */
+          /* Observing: tap aims a latitude. Embodied: the same tap reads the
+           * patch underfoot — strike's cousin on a world. Camera cycle stays
+           * on C and the scene tag, so walking is not a mode switch. */
           if (!game.inhabiting) {
             const V = RS.render.view;
             const dy = (a.startY - V.cy) / (V.R * 0.62);
             scene.lat = clamp(-Math.asin(clamp(dy, -1, 1)), -1.5, 1.5);
             RS.scenes.sampleSurface(game);
             bus.emit('scene:aim', { lat: scene.lat });
-          } else if (RS.scenes.cycleCamera) {
-            const r = RS.scenes.cycleCamera(game);
-            if (r.ok) bus.emit('scene:camera', { forceCam: r.forceCam, mode: r.mode });
+          }
+          if (RS.scenes.pulse) {
+            const r = RS.scenes.pulse(game, bus);
+            if (r.ok) bus.emit('scene:pulse', r);
+            else if (r.reason && r.reason !== 'cooling') {
+              bus.emit('ui:deny', { reason: 'blocked', message: r.reason });
+            }
           }
         } else {
           const hit = pickNode(game, a.startX, a.startY);

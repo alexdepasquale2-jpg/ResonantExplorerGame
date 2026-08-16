@@ -389,6 +389,39 @@
     return planet.extracting * best * value * 1.5;
   }
 
+  /* Sum of every sited extractor. Cached against the delta set, because
+   * deriving a world per extractor every frame would be the one place the
+   * sparse-delta premise got expensive. The field's idle floor reads this. */
+  function extractorRate(game) {
+    let ids = '';
+    for (const k in game.deltas) {
+      const list = game.deltas[k];
+      for (let i = 0; i < list.length; i++) {
+        if (list[i].id === 'extractor') ids += k + ';';
+      }
+    }
+    if (!ids) { game.__extractRate = 0; game.__extractKey = ''; return 0; }
+    /* Recompute as they mature, not every field tick. Progress is a float
+     * that applyTo writes every call; keying on it would re-derive the world
+     * sixty times a second. The ramp's time constant is twenty minutes; an
+     * 8 s bin is invisible in the HUD. */
+    const key = ids + '#' + Math.floor((game.stats.playSeconds || 0) / 8);
+    if (game.__extractKey === key) return game.__extractRate;
+    let sum = 0;
+    for (const k in game.deltas) {
+      let has = false;
+      for (let i = 0; i < game.deltas[k].length; i++) {
+        if (game.deltas[k][i].id === 'extractor') { has = true; break; }
+      }
+      if (!has) continue;
+      const p = planetFromKey(game, k);
+      if (p) sum += passiveFrom(game, p);
+    }
+    game.__extractKey = key;
+    game.__extractRate = sum;
+    return sum;
+  }
+
   /* ── The two fields ───────────────────────────────────────────────────────
    * Consciousness field: how far the player can reach and sense.
    * Reality field: how hard their influence bites when it gets there.
@@ -429,6 +462,6 @@
     isResearched, researchAvailable, tryResearch,
     canPlace, place, structuresOn, totalUpkeep, structureCount,
     express, expressionOn, EXPRESSION_ID, EXPRESSION_CAP, EXPRESSION_SCALE,
-    applyTo, passiveFrom, recomputeFields, reachRadius
+    applyTo, passiveFrom, extractorRate, recomputeFields, reachRadius
   };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));

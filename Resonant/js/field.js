@@ -751,7 +751,13 @@
      * always worth something. */
     const bands = Object.keys(game.known.bands).length;
     const tiers = Object.keys(game.known.tiers).length;
-    game.passiveRate = (bands * 0.22 + tiers * 0.14) * (1 + RS.fractal.totalGnosis(game) * 0.03);
+    const extract = (RS.influence && RS.influence.extractorRate)
+      ? RS.influence.extractorRate(game) : 0;
+    /* Extractors were marking the world and never paying. The idle floor is
+     * knowledge plus what you sited; upkeep still gates placement, it does
+     * not debit the stream. */
+    game.passiveRate = (bands * 0.22 + tiers * 0.14) *
+      (1 + RS.fractal.totalGnosis(game) * 0.03) + extract;
   }
 
   /* Offline accrual, applied once on load. Capped so the game is never better
