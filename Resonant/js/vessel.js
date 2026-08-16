@@ -201,14 +201,37 @@
     if (scene.kind === 'planet' && scene.planet) {
       const p = scene.planet;
       const surf = scene.surface || {};
-      const submerged = surf.elev != null && surf.elev < RS.planet.seaLevel(p);
+      const water = surf.sea != null ? surf.sea : RS.planet.seaLevel(p);
+      const submerged = surf.elev != null && surf.elev < water;
+      let slope = 0, fallEast = 0, fallNorth = 0;
+      if (game.inhabiting && game.body) {
+        const heading = game.body.heading;
+        const step = 0.005;
+        const clat = Math.max(0.12, Math.cos(scene.lat || 0));
+        const e0 = RS.planet.elevationDetailAt(p, scene.lon, scene.lat);
+        const e1 = RS.planet.elevationDetailAt(p,
+          scene.lon + Math.cos(heading) * step / clat,
+          scene.lat + Math.sin(heading) * step);
+        slope = e1 - e0;
+        /* Fall line is the negative gradient, independent of heading, so a
+         * body on ice slides downhill even when τ is centred. */
+        const eE = RS.planet.elevationDetailAt(p, scene.lon + step / clat, scene.lat);
+        const eN = RS.planet.elevationDetailAt(p, scene.lon, scene.lat + step);
+        fallEast = e0 - eE;
+        fallNorth = e0 - eN;
+      }
+      const biomeId = surf.biome && surf.biome.id;
       return {
         medium: submerged ? MEDIUM.LIQUID : (scene.altitude > 0.04 ? MEDIUM.GAS : MEDIUM.SURFACE),
         gravity: p.gravity,
         pressure: p.pressure,
         temperature: surf.T == null ? p.surfaceTemp : surf.T,
         flux: p.flux,
-        roughness: clamp01(p.tectonics * 0.8 + p.cratering * 0.5),
+        roughness: clamp01(p.tectonics * 0.8 + p.cratering * 0.5 + Math.abs(slope) * 2),
+        slope,
+        fallEast,
+        fallNorth,
+        biomeId,
         hasMinds: !!(p.biosphere && p.biosphere.complexity > 0.5),
         label: p.name
       };
@@ -335,6 +358,7 @@
       archId: archId || 'mote',
       x: 0, y: 0,          // position in scene-normalised units
       vx: 0, vy: 0,
+      vz: 0,               // northward on a surface; unused in other media
       heading: 0,
       /* Σ means something different per archetype but is always "the vertical
        * axis of this body" — altitude, depth, stance, orbital radius. */
@@ -397,18 +421,30 @@
     // --- thrust -----------------------------------------------------------
     /* Heading comes from Δ, magnitude from τ, and the direct drag gesture adds
      * on top — so a player can fly with dials alone, or grab the field and
-     * steer, or both. Neither is the "real" control scheme. */
-    let tx = Math.cos(ctl.heading) * ctl.rate;
-    let ty = Math.sin(ctl.heading) * ctl.rate;
-    tx += body.steerX; ty += body.steerY;
-    const tmag = Math.hypot(tx, ty);
-    if (tmag > 1) { tx /= tmag; ty /= tmag; }
-
-    /* Charge gates thrust. Running dry is not a fail state, it is a limp. */
+     * steer, or both. Neither is the "real" control scheme.
+     *
+     * On a planet surface, heading is a compass bearing: τ drives the tangent
+     * plane (east = vx, north = vz) and Σ is the vertical. Elsewhere the old
+     * mapping stands — heading's sine is still a vertical in liquids and gas
+     * because those media do not have a longitude to walk. */
     const powered = body.charge > 0.5 ? 1 : 0.15;
     const accel = arch.thrust / arch.mass * authority * powered;
-
-    let ax = tx * accel, ay = ty * accel;
+    const onPlanetSurface = env.medium === MEDIUM.SURFACE && game.scene && game.scene.kind === 'planet';
+    let ax, ay, az = 0;
+    if (onPlanetSurface) {
+      ax = Math.cos(ctl.heading) * ctl.rate * accel;
+      az = Math.sin(ctl.heading) * ctl.rate * accel;
+      ax += body.steerX * accel; az += body.steerY * accel;
+      ay = 0;
+    } else {
+      let tx = Math.cos(ctl.heading) * ctl.rate;
+      let ty = Math.sin(ctl.heading) * ctl.rate;
+      tx += body.steerX; ty += body.steerY;
+      const mag = Math.hypot(tx, ty);
+      if (mag > 1) { tx /= mag; ty /= mag; }
+      ax = tx * accel; ay = ty * accel;
+    }
+    const tmag = Math.hypot(ctl.rate, body.steerX, body.steerY);
 
     // --- gravity ----------------------------------------------------------
     /* On a surface, "down" is +y in scene space (the surface view is a side-on
@@ -424,46 +460,104 @@
         const lift = arch.liftC * env.pressure * speed * speed / arch.mass;
         ay -= Math.min(lift, g * 2.4) * authority;
       }
+      /* Σ verticals. Neutral at 0.5 so a centred dial does not hop. Walker
+       * stance is a small crouch/stretch on the floor; flier/probe chase an
+       * altitude; lander burns against gravity. */
+      const vertLift = (ctl.vert - 0.5);
+      if (env.medium === MEDIUM.SURFACE) {
+        if (arch.id === 'lander') ay -= vertLift * 3.2 * authority;
+        else if (arch.id === 'walker' || arch.id === 'rover' || arch.id === 'harvester' || arch.id === 'symbiont') {
+          /* Hop only when Σ is pushed well above centre, so walking does not
+           * bounce. Stance offset is applied after ground contact. */
+          if (ctl.vert > 0.78 && body.y >= -0.02) ay -= (ctl.vert - 0.78) * 4.5 * authority;
+        }
+      }
+      if (env.medium === MEDIUM.GAS && (arch.liftC > 0 || arch.id === 'lander' || arch.id === 'probe' || arch.id === 'flier')) {
+        const targetY = -ctl.vert * 0.62;
+        ay += (targetY - body.y) * 2.1 * authority;
+      }
     }
     if (env.medium === MEDIUM.LIQUID) {
       /* Buoyancy set by Σ: the player trims their own density. Sink to sense,
        * rise to travel. */
       ay += (0.5 - ctl.vert) * 1.6 * authority;
     }
+    if (env.medium === MEDIUM.ORBIT && (arch.id === 'courier' || arch.id === 'lander' || arch.id === 'probe')) {
+      /* Courier Σ is orbital radius, applied in the system tick. Here it only
+       * trims out-of-plane drift so the ship stays in the plane. */
+      ay += -body.y * 1.4 * authority;
+    }
+    if (env.medium === MEDIUM.CYTOPLASM) {
+      /* Depth in the cell is Σ; cilia beat is τ. No inertia to speak of. */
+      ay += (ctl.vert - 0.5) * 0.8 * authority;
+    }
+
+    /* Uphill costs speed. Ice slips, sand drags — biome, not a stat. */
+    if (onPlanetSurface && env.slope > 0) {
+      const hill = 1 / (1 + env.slope * 5);
+      ax *= hill; az *= hill;
+    }
+    /* Downhill is a fall line. Uphill already taxes thrust; without this,
+     * ice and grass feel the same the moment you stop walking. */
+    if (onPlanetSurface && body.y >= -0.05) {
+      const slip = env.biomeId === 'ice' ? 1.8
+        : (env.biomeId === 'desert' || env.biomeId === 'dunes') ? 0.25
+        : 0.55;
+      const fall = env.gravity * 2.4 * slip;
+      ax += (env.fallEast || 0) * fall;
+      az += (env.fallNorth || 0) * fall;
+    }
 
     // --- drag / friction --------------------------------------------------
     /* Density of the medium the body is moving through. Vacuum has none, which
      * is why a courier coasts and a swimmer does not. */
     const density = env.medium === MEDIUM.LIQUID ? 30
+      : env.medium === MEDIUM.CYTOPLASM ? 80
       : env.medium === MEDIUM.GAS ? env.pressure * 1.4
         : env.medium === MEDIUM.SURFACE ? 0.6 + env.pressure * 0.5
           : 0.02;
-    const dragRate = arch.dragC * density * 0.35;
+    let dragRate = arch.dragC * density * 0.35;
+    if (env.biomeId === 'desert' || env.biomeId === 'dunes') dragRate *= 1.45;
+    if (env.biomeId === 'shallows') dragRate *= 1.2;
 
     body.vx += ax * dt;
     body.vy += ay * dt;
+    body.vz = (body.vz || 0) + az * dt;
 
     const f = Math.exp(-dragRate * dt);
-    body.vx *= f; body.vy *= f;
+    body.vx *= f; body.vy *= f; body.vz *= f;
 
     /* Ground contact: friction and a floor. */
-    if ((env.medium === MEDIUM.SURFACE) && body.y >= 0) {
-      body.y = 0;
+    const floor = env.groundY != null ? env.groundY : 0;
+    if ((env.medium === MEDIUM.SURFACE) && body.y >= floor) {
+      /* Walker stance: Σ above ~0.35 lifts the silhouette slightly (negative
+       * y is up). Applied on the floor so gravity does not fight it. */
+      const stanceUp = (arch.id === 'walker' && ctl.vert > 0.4)
+        ? (ctl.vert - 0.4) * 0.14 : 0;
+      body.y = floor - stanceUp;
       if (body.vy > 0) body.vy = 0;
-      const gf = Math.exp(-arch.grip * 3.4 * dt);
+      let grip = arch.grip;
+      if (env.biomeId === 'ice') grip *= 0.22;
+      else if (env.biomeId === 'desert' || env.biomeId === 'savanna') grip *= 0.72;
+      const gf = Math.exp(-grip * 3.4 * dt);
       body.vx *= gf;
+      body.vz *= gf;
     }
 
     body.x += body.vx * dt;
     body.y += body.vy * dt;
 
     /* Heading follows travel when moving, so the body visibly turns into its
-     * motion rather than sliding sideways. */
-    const sp = Math.hypot(body.vx, body.vy);
+     * motion rather than sliding sideways. On a planet the travel vector is
+     * east/north, not east/up. */
+    const sp = onPlanetSurface
+      ? Math.hypot(body.vx, body.vz)
+      : Math.hypot(body.vx, body.vy);
     if (sp > 0.02) {
+      const want = onPlanetSurface ? Math.atan2(body.vz, body.vx) : Math.atan2(body.vy, body.vx);
       body.heading = RS.core.turnToward
-        ? RS.core.turnToward(body.heading, Math.atan2(body.vy, body.vx), dt * 6)
-        : Math.atan2(body.vy, body.vx);
+        ? RS.core.turnToward(body.heading, want, dt * 6)
+        : want;
     }
 
     // --- expenditure ------------------------------------------------------
@@ -584,10 +678,20 @@
     return archOf(body).mass + body.holdMass * 0.02;
   }
 
+  /* Keep a body inside a disc of field units. Used by cytoplasm, shells, and
+   * the other place-aware scopes so a vessel cannot leave the derived room. */
+  function confine(body, radius) {
+    const r = Math.hypot(body.x, body.y);
+    if (r <= radius) return;
+    const s = radius / (r || 1);
+    body.x *= s; body.y *= s;
+    body.vx *= 0.45; body.vy *= 0.45;
+  }
+
   RS.vessel = {
     MEDIUM, ARCHETYPES, BY_ID,
     environmentFor, canOperate, availability, bestHere, statusOf, enduranceOf,
-    newBody, archOf, controlsFrom, integrate,
+    newBody, archOf, controlsFrom, integrate, confine,
     ride, unride, stepMind, senseRadius, canSenseBand,
     addCargo, removeCargo, effectiveMass
   };

@@ -345,14 +345,18 @@
     for (let i = 0; i < n && ma < hill * 0.45; i++) {
       const mh = hashN(h, 400 + i);
       const mMass = p.massE * (0.0001 + hashF(mh, 1) * 0.02);
+      const planetMassSolar = p.massE / RS.stellar.EARTH_MASSES_PER_SOLAR;
       moons.push({
         index: i, hash: mh,
         massE: mMass,
         radiusE: radiusOf(mMass, p.body.beyondFrost),
         a: ma,
+        /* Keplerian period in years, from the moon's actual semi-major axis
+         * around this planet. Tide phase used to fall back to `period || 1`,
+         * which made every moon a one-year clock and every beach the same. */
+        period: RS.orbital.period(ma, planetMassSolar),
         name: p.name + ' ' + String.fromCharCode(97 + i),
-        elements: RS.orbital.elementsFrom(mh, ma,
-          p.massE / RS.stellar.EARTH_MASSES_PER_SOLAR, { eMax: 0.06, iMax: 0.12 }),
+        elements: RS.orbital.elementsFrom(mh, ma, planetMassSolar, { eMax: 0.06, iMax: 0.12 }),
         /* Tidal heating from a close, eccentric orbit around a massive primary
          * — the Europa/Io mechanism, and the reason a moon far outside the
          * habitable zone can still hold a subsurface ocean. */
@@ -404,6 +408,27 @@
     return e;
   }
 
+  function wrapLon(lon) {
+    return ((lon % TAU) + TAU) % TAU;
+  }
+
+  function clampLat(lat) {
+    return clamp(lat, -Math.PI / 2 + 0.02, Math.PI / 2 - 0.02);
+  }
+
+  /* Essence at a hillside-sized patch. Neighbouring samples share a cell so
+   * meso detail is coherent over a slope rather than sparkling per coordinate. */
+  function essenceAtPatch(p, lon, lat) {
+    const cl = Math.cos(lat);
+    const x = Math.cos(lon) * cl, y = Math.sin(lon) * cl, z = Math.sin(lat);
+    /* Round, not floor: a floor bin edge sits on the antimeridian (y = 0,
+     * x = −1) and would make 180° a cliff. */
+    const cellX = Math.round((x + 1) * 24);
+    const cellY = Math.round((y + 1) * 24);
+    const slot = Math.round((z + 1) * 8);
+    return RS.fractal.essenceAt(p.hash, cellX, cellY, slot);
+  }
+
   /* Elevation including small-scale roughness.
    *
    * `elevationAt` is a *planetary* field: its features have wavelengths of
@@ -417,19 +442,43 @@
    * enough to change a biome or a coastline, so the globe and the ground still
    * agree about where the mountains and oceans are. Amplitude follows the
    * world's own tectonics and cratering, so a dead smooth world really is
-   * smooth underfoot and an active one is broken ground. */
+   * smooth underfoot and an active one is broken ground.
+   *
+   * Meso shape is further tinted by the local essence: branching raises ridges
+   * and carves drainage, persistence softens the high octaves, symmetry makes
+   * the hills more regular. The axes are the same 64 numbers everywhere else. */
   function elevationDetailAt(p, lon, lat) {
     const base = elevationAt(p, lon, lat);
+    const ess = essenceAtPatch(p, lon, lat);
+    const ridgeAmp = lerp(0.82, 1.18, ess.branching);
+    const softAmp = lerp(1.12, 0.72, ess.persistence);
+    const jitter = lerp(1.12, 0.88, ess.symmetry);
     const rough = 0.25 + p.tectonics * 0.9 + p.cratering * 0.5;
-    /* Three bands, each an order of magnitude finer than the last: hills,
-     * boulders, then the texture underfoot. */
+    /* Sample on the sphere so the extra octaves inherit the same antimeridian
+     * continuity as `elevationAt`. lon*N noise would seam, and a walker
+     * crossing 180° would step off a cliff that is not there. */
+    const cl = Math.cos(lat);
+    const x = Math.cos(lon) * cl, y = Math.sin(lon) * cl, z = Math.sin(lat);
     let d = 0;
-    d += (fbm(p.hash ^ 0xD37A, lon * 42, lat * 42 + 5, 3) * 2 - 1) * 0.085;
-    d += (fbm(p.hash ^ 0xB017, lon * 190, lat * 190 + 11, 2) * 2 - 1) * 0.028;
-    d += (fbm(p.hash ^ 0x51CE, lon * 880, lat * 880 + 3, 2) * 2 - 1) * 0.008;
+    d += (fbm(p.hash ^ 0xD37A, x * 42 * jitter, y * 42 + z * 5, 3) * 2 - 1) * 0.085 * ridgeAmp;
+    d += (fbm(p.hash ^ 0xB017, x * 190, y * 190 + 11, 2) * 2 - 1) * 0.028 * softAmp;
+    d += (fbm(p.hash ^ 0x51CE, x * 880, y * 880 + z * 3, 2) * 2 - 1) * 0.008 * softAmp;
+    if (ess.branching > 0.45) {
+      const drain = 1 - Math.abs(fbm(p.hash ^ 0xD41A, x * 64, y * 64, 2) * 2 - 1);
+      d -= drain * drain * (ess.branching - 0.45) * 0.05;
+    }
     /* Wind and water smooth things out; airless worlds keep their sharp edges. */
     const erosion = 1 / (1 + p.pressure * 0.35 + p.hydrosphere * 0.6);
-    return base + d * rough * erosion;
+    let result = base + d * rough * erosion;
+    /* Detail never flips land versus sea against the planetary field. That is
+     * the contract the globe and the ground share: biomes and coastlines are
+     * `elevationAt`'s job. */
+    const sea = seaLevel(p);
+    if (p.hydrosphere > 0) {
+      if (base >= sea && result < sea) result = sea;
+      if (base < sea && result >= sea) result = sea - 1e-4;
+    }
+    return result;
   }
 
   /* Sea level, set so that the hydrosphere fraction of the surface is covered.
@@ -484,7 +533,7 @@
    * tidally locked world — by longitude, because one hemisphere never sees its
    * star. Locked worlds therefore get a genuinely different climate map with a
    * habitable terminator ring, and that falls out of the same formula. */
-  function temperatureAt(p, lon, lat, elev) {
+  function temperatureAt(p, lon, lat, elev, epochYears) {
     let insolation;
     if (p.tidallyLocked) {
       /* Substellar point at lon 0. */
@@ -492,6 +541,14 @@
       insolation = clamp01(sub) * 1.5 + 0.06;
     } else {
       insolation = Math.cos(lat) * 0.85 + 0.28;
+      /* Seasonal nudge from axial tilt. The globe omits the epoch so its
+       * texture cache stays a climate mean; the surface passes `scene.t` so
+       * poles can freeze and thaw without storing a map. */
+      if (epochYears != null && p.axialTilt > 0.05) {
+        const yearPhase = ((epochYears % 1) + 1) % 1;
+        const decl = p.axialTilt * Math.sin(yearPhase * TAU);
+        insolation += Math.sin(lat) * decl * 0.45;
+      }
     }
     /* Thick atmospheres transport heat and flatten the gradient — which is why
      * Venus is nearly isothermal and Mars is not. */
@@ -503,7 +560,7 @@
     return T - above * 55 * p.gravity / (1 + p.pressure * 0.5);
   }
 
-  function moistureAt(p, lon, lat, elev) {
+  function moistureAt(p, lon, lat, elev, epochYears) {
     if (p.hydrosphere <= 0) return 0;
     const cl = Math.cos(lat);
     const x = Math.cos(lon) * cl, y = Math.sin(lon) * cl, z = Math.sin(lat);
@@ -511,14 +568,21 @@
     /* Closer to the datum and closer to water means wetter; high ground in a
      * continental interior is dry. */
     const proximity = clamp01(1 - (elev - datum(p)) * 1.6);
-    return clamp01(base * 0.55 + proximity * 0.55) * clamp01(p.hydrosphere * 2.2);
+    let m = clamp01(base * 0.55 + proximity * 0.55) * clamp01(p.hydrosphere * 2.2);
+    if (epochYears != null && !p.tidallyLocked && p.axialTilt > 0.09) {
+      const yearPhase = ((epochYears % 1) + 1) % 1;
+      const decl = p.axialTilt * Math.sin(yearPhase * TAU);
+      /* Summer hemisphere evaporates a little; winter holds more as snow. */
+      m = clamp01(m * (1 - Math.sin(lat) * decl * 0.18));
+    }
+    return m;
   }
 
-  function biomeAt(p, lon, lat) {
+  function biomeAt(p, lon, lat, epochYears) {
     const elev = elevationAt(p, lon, lat);
     const sea = seaLevel(p);
-    const T = temperatureAt(p, lon, lat, elev);
-    const M = moistureAt(p, lon, lat, elev);
+    const T = temperatureAt(p, lon, lat, elev, epochYears);
+    const M = moistureAt(p, lon, lat, elev, epochYears);
 
     if (p.type === TYPES.lava) return { biome: BIOME_BY_ID.lava, elev, T, M };
     if (elev < sea) {
@@ -563,10 +627,37 @@
     return { biomes: out, landFraction: land / n, temperateFraction: hab / n };
   }
 
+  /* Local abundance at a standing patch. Planet-wide `resources` is the ore
+   * body; this is the outcrop. Hash + elevation + biome, never a stored map. */
+  function resourceAt(p, lon, lat) {
+    const r = biomeAt(p, lon, lat);
+    const h = hashN(p.hash, Math.round(lon * 40), Math.round(lat * 40));
+    const id = r.biome.id;
+    const above = Math.max(0, r.elev - datum(p));
+    const out = {};
+    let i = 0;
+    for (const k in p.resources) {
+      let v = p.resources[k] * (0.6 + hashF(h, 3 + i) * 0.8);
+      i++;
+      if (k === 'metals' && (id === 'mountain' || id === 'badlands')) v *= 1.35;
+      if (k === 'silicates' && (id === 'regolith' || id === 'desert')) v *= 1.25;
+      if (k === 'volatiles' && (id === 'ice' || id === 'ocean' || id === 'shallows')) v *= 1.4;
+      if (k === 'organics' && (id === 'forest' || id === 'jungle' || id === 'grass')) v *= 1.45;
+      if (k === 'rareEarths' && (id === 'mountain' || id === 'crystal')) v *= 1.3;
+      if (k === 'fissiles' && above > 0.4) v *= 1.2;
+      if (k === 'exotics' && (id === 'crystal' || id === 'lava')) v *= 1.5;
+      if (k === 'metals') v *= 1 + above * 0.4;
+      if (k === 'organics') v *= 1 - clamp01(above) * 0.35;
+      out[k] = clamp01(v);
+    }
+    return out;
+  }
+
   RS.planet = {
     GASES, TYPES, BIOMES, BIOME_BY_ID, RESOURCE_KINDS,
     radiusOf, thermalVelocity, retains, equilibriumTemp, greenhouseFactor,
     planetAt, classify, habitabilityOf, resourcesOf, moonsOf,
-    elevationAt, elevationDetailAt, seaLevel, datum, temperatureAt, moistureAt, biomeAt, survey
+    elevationAt, elevationDetailAt, seaLevel, datum, temperatureAt, moistureAt, biomeAt, survey,
+    wrapLon, clampLat, essenceAtPatch, resourceAt
   };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));

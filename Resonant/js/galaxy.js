@@ -58,6 +58,9 @@
       /* Currently highlighted star, and the one committed to as a target. */
       hover: -1,
       target: null,
+      /* Fractional sector offset of an inhabited courier. Crossing ±0.5
+       * steps sx/sy — an address change, not a stored path. Ephemeral. */
+      driftX: 0, driftY: 0,
       /* Slow parallax drift so the map is never completely still. */
       t: 0
     };
@@ -189,6 +192,8 @@
     if (!res.ok) return res;
     game.galaxy.sx = st.sx;
     game.galaxy.sy = st.sy;
+    game.galaxy.driftX = 0;
+    game.galaxy.driftY = 0;
     game.galaxy.cacheKey = '';
     game.stats.jumps = (game.stats.jumps || 0) + 1;
     RS.scenes.enterSystem(game, bus, { sx: st.sx, sy: st.sy, index: st.index });
@@ -196,9 +201,68 @@
     return { ok: true };
   }
 
+  /* A courier's vacuum velocity accumulates a fractional sector. Crossing
+   * ±0.5 steps the integer address and wraps the fraction, so the map
+   * recentres and the glyph stays continuous. Reach is the same gate as a
+   * tap-travel hop: one sector from here, not a stored trail home. */
+  function stepSector(game, bus) {
+    const G = game.galaxy;
+    const body = game.body;
+    const reach = RS.influence.reachRadius(game);
+    for (let n = 0; n < 4; n++) {
+      const ax = Math.abs(G.driftX || 0);
+      const ay = Math.abs(G.driftY || 0);
+      if (ax < 0.5 && ay < 0.5) break;
+      let dx = 0, dy = 0;
+      if (ax >= ay) dx = G.driftX > 0 ? 1 : -1;
+      else dy = G.driftY > 0 ? 1 : -1;
+      const here = { sx: G.sx, sy: G.sy, jx: 0, jy: 0 };
+      const next = { sx: G.sx + dx, sy: G.sy + dy, jx: 0, jy: 0 };
+      if (distanceLy(here, next) > reach * LY_PER_SECTOR) {
+        /* Soft wall at the field edge. A one-sector orthogonal hop is always
+         * inside the minimum field; this is the diagonal, and any future
+         * multi-sector shove. */
+        if (dx) { G.driftX = clamp(G.driftX, -0.49, 0.49); if (body) body.vx *= 0.35; }
+        if (dy) { G.driftY = clamp(G.driftY, -0.49, 0.49); if (body) body.vy *= 0.35; }
+        break;
+      }
+      G.sx += dx;
+      G.sy += dy;
+      if (dx) G.driftX -= dx;
+      if (dy) G.driftY -= dy;
+      G.cacheKey = '';
+      refresh(game);
+      /* Name the nearest resolved star in this cell without entering it.
+       * Descending is still Σ. */
+      const snapped = nearestInCell(G, G.sx, G.sy);
+      if (snapped && snapped.inReach) G.target = snapped;
+      if (bus && bus.emit) bus.emit('galaxy:drift', { sx: G.sx, sy: G.sy, star: snapped || null });
+    }
+  }
+
+  function nearestInCell(G, sx, sy) {
+    let best = null, bd = Infinity;
+    for (let i = 0; i < G.stars.length; i++) {
+      const st = G.stars[i];
+      if (st.sx !== sx || st.sy !== sy) continue;
+      const d = Math.hypot(st.jx || 0, st.jy || 0);
+      if (d < bd) { bd = d; best = st; }
+    }
+    return best;
+  }
+
   function tick(game, bus, dt) {
     game.galaxy.t += dt;
     refresh(game);
+    if (game.inhabiting && game.body) {
+      const G = game.galaxy;
+      const body = game.body;
+      G.driftX = (G.driftX || 0) + body.vx * dt * 0.18;
+      G.driftY = (G.driftY || 0) + body.vy * dt * 0.18;
+      stepSector(game, bus);
+      body.x = G.driftX;
+      body.y = G.driftY;
+    }
   }
 
   // ── rendering ────────────────────────────────────────────────────────────
@@ -380,6 +444,14 @@
     ctx.textAlign = 'left';
     ctx.fillStyle = 'rgba(200,220,245,0.6)';
     ctx.fillText(barLy + ' ly', bx, by - 6);
+
+    if (game.inhabiting && game.body && RS.worldrender && RS.worldrender.drawVesselGlyph) {
+      const dx = (game.galaxy.driftX || game.body.x || 0);
+      const dy = (game.galaxy.driftY || game.body.y || 0);
+      RS.worldrender.drawVesselGlyph(ctx, game,
+        V.cx + (dx / span) * V.R,
+        V.cy + (dy / span) * V.R * 0.86);
+    }
   }
 
   /* Hit test for taps. Generous, because stars are small targets. */
@@ -395,6 +467,7 @@
 
   RS.galaxy = {
     LY_PER_SECTOR, WINDOW, newState, starsIn, distanceLy, refresh,
-    surveyOf, clearSurveys, selectStar, travelTo, tick, draw, pick
+    surveyOf, clearSurveys, selectStar, travelTo, tick, draw, pick,
+    stepSector
   };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));

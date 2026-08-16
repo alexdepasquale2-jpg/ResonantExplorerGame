@@ -165,6 +165,9 @@
       lon: 0, lat: 0,
       altitude: 0,
       surface: null,
+      /* Dual cameras while inhabiting: 'sideon' | 'freeroam' | 'globe', or
+       * null to follow the altitude rule. Observing always uses the globe. */
+      forceCam: null,
       /* Agents: derived creatures with live minds. Small, pooled, transient. */
       agents: [],
       agentAcc: 0,
@@ -298,6 +301,12 @@
     /* The body is integrated in every scene — even the attunement field, where
      * a mote drifts. */
     if (game.inhabiting) tickBody(game, bus, dt);
+    /* Confine after integration so a long frame cannot punch through a wall. */
+    if (game.inhabiting && game.body) {
+      if (s.kind === 'cellular' || s.kind === 'web' || s.kind === 'molecular' || s.kind === 'shells') {
+        RS.vessel.confine(game.body, 0.95);
+      }
+    }
 
     s.zoom.step(dt); s.camX.step(dt); s.camY.step(dt);
   }
@@ -330,6 +339,8 @@
         game.galaxy.sx = s.systemAddr.sx;
         game.galaxy.sy = s.systemAddr.sy;
       }
+      game.galaxy.driftX = 0;
+      game.galaxy.driftY = 0;
       game.galaxy.cacheKey = '';
       RS.galaxy.refresh(game);
     } else if (kind === 'system') {
@@ -463,6 +474,33 @@
      * Awareness is what makes a carrier lock answerable, so simply being
      * present is the first half of making contact. */
     tickContact(game, bus, dt);
+    tickSystemPlace(game, dt);
+  }
+
+  /* Courier Σ → log-space orbital radius. Heading and τ walk the plane.
+   * Hohmann delta-v is charged when the radius changes, so transferring is
+   * not free even though the orbit itself stays analytic. */
+  function tickSystemPlace(game, dt) {
+    const s = game.scene;
+    if (!game.inhabiting || !s.system) return;
+    const ctl = RS.vessel.controlsFrom(game);
+    const inner = Math.max(0.02, s.system.discInner || 0.05);
+    const outer = Math.max(inner * 1.2, s.system.discOuter || inner * 20);
+    const u = clamp01(ctl.vert);
+    const radius = inner * Math.pow(outer / inner, u);
+    s.orbitAngle = (s.orbitAngle || 0) + ctl.rate * dt * 0.55;
+    /* Δ as transfer angle: a held heading precesses the true anomaly. */
+    s.orbitAngle += Math.sin(ctl.heading) * dt * 0.12;
+    const body = game.body;
+    if (s.__lastRadius != null && Math.abs(radius - s.__lastRadius) > 0.001) {
+      const dv = RS.orbital.hohmannDeltaV(s.__lastRadius, radius, s.system.primary.mass);
+      if (dv > 0) body.charge -= Math.min(6, dv * 0.03) * dt;
+    }
+    s.radius = radius;
+    s.__lastRadius = radius;
+    const rr = 0.13 + 0.84 * u;
+    body.x = Math.cos(s.orbitAngle) * rr;
+    body.y = Math.sin(s.orbitAngle) * rr * 0.62;
   }
 
   /* A civilisation with the player's influence applied — uplift, standing,
@@ -511,11 +549,15 @@
   function sampleSurface(game) {
     const s = game.scene;
     if (!s.planet) return null;
-    const r = RS.planet.biomeAt(s.planet, s.lon, s.lat);
+    const r = RS.planet.biomeAt(s.planet, s.lon, s.lat, s.t);
+    const elev = RS.planet.elevationDetailAt(s.planet, s.lon, s.lat);
+    const water = RS.localtime.waterlineAt(s.planet, s.lon, s.t);
     s.surface = {
       lon: s.lon, lat: s.lat,
-      elev: r.elev, T: r.T, M: r.M, biome: r.biome,
-      sea: RS.planet.seaLevel(s.planet)
+      elev, T: r.T, M: r.M, biome: r.biome,
+      sea: water,
+      planetaryElev: r.elev,
+      resource: RS.planet.resourceAt(s.planet, s.lon, s.lat)
     };
     return s.surface;
   }
@@ -523,20 +565,100 @@
   /* The terrain profile under the player: a side-on slice sampled from the
    * elevation field along the current latitude. There is no mesh — this is
    * evaluated fresh every frame for exactly the span on screen, which is why
-   * a planet has no loading time and no level of detail to manage. */
+   * a planet has no loading time and no level of detail to manage.
+   *
+   * Returns `{ elev, biome, moist, n }` rather than a bare Float32Array so the
+   * side-on fill can be multi-biome without a second 96-sample pass. */
   const PROFILE_N = 96;
+  function profileBuf(s, key) {
+    return s[key] || (s[key] = {
+      elev: new Float32Array(PROFILE_N),
+      moist: new Float32Array(PROFILE_N),
+      biome: new Array(PROFILE_N),
+      n: PROFILE_N
+    });
+  }
   function terrainProfile(game, halfSpan, out) {
     const s = game.scene;
-    const arr = out || (s.__profile || (s.__profile = new Float32Array(PROFILE_N)));
-    if (!s.planet) return arr;
-    /* The detailed field, not the planetary one — at this span the planetary
-     * field is a straight line and the ground would read as a flat wall. */
+    const buf = out || profileBuf(s, '__profile');
+    buf.n = PROFILE_N;
+    if (!s.planet) return buf;
+    const epoch = s.t || 0;
     for (let i = 0; i < PROFILE_N; i++) {
       const u = i / (PROFILE_N - 1);
       const lon = s.lon + (u - 0.5) * halfSpan * 2;
-      arr[i] = RS.planet.elevationDetailAt(s.planet, lon, s.lat);
+      buf.elev[i] = RS.planet.elevationDetailAt(s.planet, lon, s.lat);
+      const r = RS.planet.biomeAt(s.planet, lon, s.lat, epoch);
+      buf.biome[i] = r.biome;
+      buf.moist[i] = r.M;
     }
-    return arr;
+    return buf;
+  }
+
+  /* Player-centred neighbourhood for the freeroam camera. Fixed 48×32 grid,
+   * never a mesh, never stored. */
+  const FREE_W = 48, FREE_H = 32;
+  function neighbourhood(game, spanLon, out) {
+    const s = game.scene;
+    const buf = out || profileBuf(s, '__hood');
+    /* Reuse the profile buffer shape but with a 2d colour table on the scene. */
+    const n = FREE_W * FREE_H;
+    if (!s.__hoodCss || s.__hoodCss.length !== n) s.__hoodCss = new Array(n);
+    if (!s.__hoodElev || s.__hoodElev.length !== n) s.__hoodElev = new Float32Array(n);
+    if (!s.planet) return { w: FREE_W, h: FREE_H, css: s.__hoodCss, elev: s.__hoodElev, spanLon: spanLon };
+    const spanLat = spanLon * (FREE_H / FREE_W);
+    const epoch = s.t || 0;
+    for (let iy = 0; iy < FREE_H; iy++) {
+      const lat = RS.planet.clampLat(s.lat - (iy / (FREE_H - 1) - 0.5) * spanLat * 2);
+      for (let ix = 0; ix < FREE_W; ix++) {
+        const lon = s.lon + (ix / (FREE_W - 1) - 0.5) * spanLon * 2;
+        const i = iy * FREE_W + ix;
+        const r = RS.planet.biomeAt(s.planet, lon, lat, epoch);
+        s.__hoodCss[i] = r.biome;
+        s.__hoodElev[i] = RS.planet.elevationDetailAt(s.planet, lon, lat);
+      }
+    }
+    return { w: FREE_W, h: FREE_H, css: s.__hoodCss, elev: s.__hoodElev, spanLon, spanLat };
+  }
+
+  /* Dual-camera rule while inhabiting a planet:
+   *   observing            → globe
+   *   altitude / toggle    → freeroam neighbourhood
+   *   near the ground      → rich side-on slice
+   * Pose (lon, lat, altitude) is shared; switching never teleports. */
+  function cameraMode(game) {
+    const s = game.scene;
+    if (!s || s.kind !== 'planet') return 'globe';
+    if (s.forceCam === 'freeroam' || s.forceCam === 'sideon' || s.forceCam === 'globe') {
+      return s.forceCam;
+    }
+    if (!game.inhabiting) return 'globe';
+    if (s.altitude > 0.22) return 'freeroam';
+    return 'sideon';
+  }
+
+  /* Player-facing cycle: AUTO → SIDE-ON → MAP → AUTO.
+   * Globe stays an observing / debug mode, not a walk cycle. */
+  function cycleCamera(game) {
+    const s = game.scene;
+    if (!s || s.kind !== 'planet' || !game.inhabiting) {
+      return { ok: false, reason: 'not piloting a planet' };
+    }
+    if (s.forceCam == null) s.forceCam = 'sideon';
+    else if (s.forceCam === 'sideon') s.forceCam = 'freeroam';
+    else s.forceCam = null;
+    return { ok: true, forceCam: s.forceCam, mode: cameraMode(game) };
+  }
+
+  function cameraLabel(game) {
+    const s = game.scene;
+    if (!s || s.kind !== 'planet' || !game.inhabiting) {
+      return game.inhabiting ? 'PILOTING' : 'OBSERVING';
+    }
+    if (s.forceCam === 'freeroam') return 'MAP';
+    if (s.forceCam === 'sideon') return 'SIDE-ON';
+    if (s.forceCam === 'globe') return 'GLOBE';
+    return 'AUTO';
   }
 
   function tickPlanet(game, bus, dt) {
@@ -552,14 +674,18 @@
     }
     tickContact(game, bus, dt);
 
-    /* Walking moves you along the planet's longitude. The body's x velocity is
-     * in scene units; converting to radians uses the planet's actual radius,
-     * so a big world genuinely takes longer to cross. */
+    /* Walking moves you on the tangent plane. Heading × speed → (dlon, dlat)
+     * using the planet's real radius, so a big world takes longer to cross
+     * and the poles pinch longitude the way a sphere must. */
     if (game.inhabiting) {
-      const circumference = s.planet.radiusE * 6371 * TAU;   // km
-      s.lon += (game.body.vx * 0.02) / Math.max(1, circumference) * 4000 * dt;
-      s.lon = ((s.lon % TAU) + TAU) % TAU;
-      s.altitude = Math.max(0, -game.body.y);
+      const body = game.body;
+      const R = s.planet.radiusE * 6371;
+      const clat = Math.max(0.12, Math.cos(s.lat));
+      /* Same conversion the 1D longitude track used, now applied on two axes. */
+      const k = 80 / Math.max(1, R);
+      s.lon = RS.planet.wrapLon(s.lon + body.vx * k / clat * dt);
+      s.lat = RS.planet.clampLat(s.lat + (body.vz || 0) * k * dt);
+      s.altitude = Math.max(0, -body.y);
     }
     sampleSurface(game);
 
@@ -588,8 +714,9 @@
     const mind = RS.neural.mindAt(fauna.hash);
     s.agents.push({
       fauna, mind, state: RS.neural.newState(),
-      x: (Math.random() * 2 - 1) * 0.9,
-      y: 0, vx: 0, vy: 0,
+      lon: RS.planet.wrapLon(s.lon + (Math.random() * 2 - 1) * 0.04),
+      lat: RS.planet.clampLat(s.lat + (Math.random() * 2 - 1) * 0.02),
+      x: 0, y: 0, vx: 0, vy: 0, vz: 0,
       heading: Math.random() * TAU,
       energy: 0.6 + Math.random() * 0.4,
       ridden: false
@@ -606,8 +733,11 @@
     const g = p.gravity;
 
     /* Sensory gradients, all local and all cheap. */
-    const toPlayer = game.inhabiting ? (game.body.x - a.x) : 0;
-    const distPlayer = Math.abs(toPlayer);
+    const dlon = wrapDeltaLon((a.lon != null ? a.lon : s.lon) - s.lon);
+    const dlat = (a.lat != null ? a.lat : s.lat) - s.lat;
+    a.x = dlon / 0.09;
+    const toPlayer = game.inhabiting ? -a.x : 0;
+    const distPlayer = Math.hypot(dlon, dlat) / 0.09;
     /* The player reads as a threat or as kin depending on the reality field —
      * a strong field makes you legible to local life rather than alien to it. */
     const rf = game.fields ? game.fields.reality : 0;
@@ -629,18 +759,35 @@
     a.heading += out[1] * dt * 1.8;
     const drive = out[0] * power * 0.9;
     a.vx += Math.cos(a.heading) * drive * dt;
+    a.vz = (a.vz || 0) + Math.sin(a.heading) * drive * dt;
     if (a.fauna.locomotion === 'flying') a.vy += (out[2] * 0.6 - g * 0.25) * dt;
     else a.vy += g * 0.5 * dt;
 
     const f = Math.exp(-(1.4 + p.pressure * 0.4) * dt);
-    a.vx *= f; a.vy *= f;
-    a.x += a.vx * dt; a.y += a.vy * dt;
+    a.vx *= f; a.vy *= f; a.vz *= f;
+    const R = p.radiusE * 6371;
+    const k = 80 / Math.max(1, R);
+    const clat = Math.max(0.12, Math.cos(a.lat != null ? a.lat : s.lat));
+    a.lon = RS.planet.wrapLon((a.lon != null ? a.lon : s.lon) + a.vx * k / clat * dt);
+    a.lat = RS.planet.clampLat((a.lat != null ? a.lat : s.lat) + a.vz * k * dt);
+    a.y += a.vy * dt;
     if (a.y > 0) { a.y = 0; if (a.vy > 0) a.vy = 0; }
-    /* Wrap rather than despawn — the population stays around the player. */
-    if (a.x > 1.15) a.x = -1.15;
-    if (a.x < -1.15) a.x = 1.15;
+    /* Keep the live population near the player rather than wrapping a 1D strip. */
+    const ndlon = wrapDeltaLon(a.lon - s.lon);
+    const ndlat = a.lat - s.lat;
+    if (Math.hypot(ndlon, ndlat) > 0.14) {
+      a.lon = RS.planet.wrapLon(s.lon + ndlon * 0.25);
+      a.lat = RS.planet.clampLat(s.lat + ndlat * 0.25);
+    }
+    a.x = wrapDeltaLon(a.lon - s.lon) / 0.09;
 
     a.energy = clamp01(a.energy + (Math.abs(drive) * -0.05 + 0.02) * dt);
+  }
+
+  function wrapDeltaLon(d) {
+    if (d > Math.PI) d -= TAU;
+    if (d < -Math.PI) d += TAU;
+    return d;
   }
 
   // ── the player's body ────────────────────────────────────────────────────
@@ -694,7 +841,9 @@
   function nearestSense(game, s) {
     let food = 0, threat = 0, kin = 0;
     for (const a of s.agents) {
-      const d = Math.abs(a.x - game.body.x);
+      const dlon = wrapDeltaLon((a.lon != null ? a.lon : s.lon) - s.lon);
+      const dlat = (a.lat != null ? a.lat : s.lat) - s.lat;
+      const d = Math.hypot(dlon, dlat) / 0.09;
       if (d > 0.6) continue;
       const w = 1 - d / 0.6;
       if (a.fauna.diet === 'predator') threat = Math.max(threat, w);
@@ -776,10 +925,11 @@
     if (game.body.charge < 8) return { ok: false, reason: 'insufficient charge' };
 
     /* What comes out depends on where you are standing: the biome and the
-     * planet's resource profile together. */
+     * planet's resource profile together, sampled at this lon/lat. */
+    const local = RS.planet.resourceAt(s.planet, s.lon, s.lat);
     let bestId = null, bestV = 0;
-    for (const k in s.planet.resources) {
-      const v = s.planet.resources[k] * (0.6 + RS.core.hashF(hashN(s.planet.hash, Math.round(s.lon * 40)), 3) * 0.8);
+    for (const k in local) {
+      const v = local[k];
       if (v > bestV) { bestV = v; bestId = k; }
     }
     if (!bestId) return { ok: false, reason: 'nothing here' };
@@ -820,7 +970,8 @@
     TIER_PLANET, TIER_STELLAR, TIER_SYSTEM, TIER_CELL, TIER_QUANTUM, TIER_GROUP, TIER_HUBBLE, TIER_ENSEMBLE, TIER_ATOMIC, TIER_MOLECULAR,
     SCENES, SCENE_BY_ID, sceneForTier, tierForScene, newScene, systemAddrFrom, systemKey, enterSystem, selectBody,
     derivePlanet, mostInteresting, tick, systemPositions, terrainProfile,
-    sampleSurface, embark, disembark, extract, sell, PROFILE_N,
-    TIER_CLUSTER, civAt, tickContact
+    neighbourhood, cameraMode, cycleCamera, cameraLabel, sampleSurface, embark, disembark, extract, sell, PROFILE_N,
+    FREE_W, FREE_H,
+    TIER_CLUSTER, civAt, tickContact, wrapDeltaLon
   };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));

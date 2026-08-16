@@ -14,7 +14,7 @@ authoritative developer guide.
 
 Standard commands (run from `Resonant/`):
 
-- Test: `node tools/simtest.js` — headless assertion suite (1650+ assertions,
+- Test: `node tools/simtest.js` — headless assertion suite (1750 assertions,
   runs against the real modules under a `window` shim; takes ~25s). It must be
   green before committing. There is no separate lint step; this suite is the
   gate.
@@ -29,8 +29,17 @@ Developer cheat HUD (debug only):
 - Enabled automatically on `localhost` / `127.0.0.1`, or with `?debug=1`, or
   when `localStorage.resonantDebug === '1'`.
 - Press backtick (`` ` ``) to toggle the floating DEV panel. Grant Insight, max
-  unlocks, jump scenes, snap φ to bands, apply presets, and force-save from
-  there. Actions go through existing `RS.*` APIs (`js/debug.js`).
+  unlocks, jump scenes, snap φ to bands, apply presets, force-save, teleport
+  lon/lat, dump the biome/elevation underfoot, and force planet camera mode
+  (side-on / freeroam / globe) from there. Actions go through existing `RS.*`
+  APIs (`js/debug.js`).
+
+Planet cameras (while inhabiting): near-ground is the side-on slice; altitude
+above ~0.22 is the 48×32 freeroam neighbourhood; observing is still the globe.
+Cycle with the scene tag, `C`, or a tap on empty ground (AUTO → SIDE-ON → MAP).
+The debug HUD can still force a mode, including globe. Sample counts are fixed
+— do not grow them with zoom. No heightmaps: `effective = derived(address) ⊕
+deltas`.
 
 Non-obvious notes for developing/testing in the browser:
 

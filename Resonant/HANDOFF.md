@@ -31,7 +31,7 @@ That one decision is why a 22-rung ladder of scopes costs almost nothing, why
 saves are ~2 kB, and why an alternative-physics universe is possible at all.
 
 ```bash
-node tools/simtest.js      # 1652 assertions — must be green before you commit
+node tools/simtest.js      # 1750 assertions — must be green before you commit
 node tools/build.mjs       # emits dist/resonant.html, one self-contained file
 python3 -m http.server 8000   # then open /Resonant/index.html
 ```
@@ -79,9 +79,30 @@ analytic where it buys scale, integrated where it buys feel.
 > **If you find yourself adding an array of world objects, stop.** Derive it
 > from its address instead. Everything in the game already does.
 
+### 2.2b Dual cameras on a planet, one heightfield
+
+While inhabiting a planet the camera is a view of the same derived sphere, not
+a second world:
+
+- **Observing** → globe (baked 96×48 biome table, unchanged).
+- **Near the ground** → rich side-on slice (96-sample profile, multi-biome fill,
+  tide waterline, parallax far band).
+- **Altitude above ~0.22, or a camera toggle** → 48×32 freeroam
+  neighbourhood. Zoom opens the span; sample count does not. Toggle with
+  the scene tag, `C`, or a tap on empty ground while inhabiting.
+
+Pose is `(scene.lon, scene.lat, scene.altitude)`. Agents live in lon/lat.
+Saves still persist only those numbers. Debug HUD can teleport and dump the
+patch underfoot.
+
+Sample budgets are fixed: profile 96, freeroam 48×32, globe 96×48. Do not grow
+them with zoom. Cellular / system / galaxy / field / web / molecular / shells
+draw the vessel glyph and couple `body.x/y` to the local derived room. Foam
+stays embark-blocked.
+
 ### 2.3 The test suite is the specification
 
-`tools/simtest.js` is 1652 assertions and about half the value of this
+`tools/simtest.js` is 1750 assertions and about half the value of this
 repository. It runs headless in Node against the real modules (including
 `ui.js`, `audio.js` — the HTML builders are pure string functions).
 
@@ -226,22 +247,23 @@ rather than a number.
 
 ## 7. What to do next, in order of value
 
-The culture, riding, range, bloom-buffer and mobile-layout passes have landed.
-See `contact.js` (rumours, relays, `lean`), `bloom.js` (`begin` / `captureWorld` /
-`blit`), and the 560px drawer-tab / pilot-bar rules in `style.css`.
+The vessel open-world pass and its follow-up have landed: planetary geology,
+lon/lat freeroam plus rich side-on, place-aware vessel glyphs, galaxy vacuum
+drift as a real `sx/sy` address change, a player-facing camera cycle, downhill
+fall-line slides, a wider rumour census, cheaper bloom in the attunement field,
+and guide copy for riding a culture from orbit.
 
 What is still worth doing:
 
-1. **Bloom cost in the attunement field.** The world buffer removes the flush;
-   the remaining ~1.3 ms of threshold/blur is still the dearest post in the
-   game. A cheaper threshold (or skipping STRIDE more aggressively in that
-   scope) is the next fps win, if any.
-2. **A census of rumours.** Neighbour sampling is hashed and capped; a culture
-   whose only neighbour sits outside the sample will not name them. Widening
-   the sample is safe and cheap compared to a full sector walk.
-3. **Guide copy for riding a culture.** The symbiont now works in orbit. The
-   live guide still talks about riding a creature first, which is the common
-   case, but an orbital ride is easy to miss.
+1. **Feel of a sector crossing.** The address change is real; the map
+   recentres in one frame. A short ease or a toast naming the snapped star
+   would make the courier's hop read as travel rather than a cut.
+2. **Foam remains embark-blocked.** That is the live rule (`Σ` is vertical
+   while embodied). If a later pass wants a foam-native body, it has to be
+   a new medium, not a weakening of `embark`.
+3. **Sample budgets stay fixed.** Do not grow the profile, neighbourhood, or
+   globe grids with zoom. If a scope feels empty, derive a different question
+   of the same samples.
 
 ---
 
@@ -263,7 +285,7 @@ What is still worth doing:
 ## 9. Verification checklist before you push
 
 ```bash
-node tools/simtest.js     # 1652+ assertions, zero failures
+node tools/simtest.js     # 1750 assertions, zero failures
 node tools/build.mjs      # single file still builds
 ```
 

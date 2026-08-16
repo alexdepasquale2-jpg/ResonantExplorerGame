@@ -12,7 +12,7 @@ backend, no assets. Runs offline from `index.html`.
 
 ```
 python3 -m http.server 8000      # then open http://localhost:8000/index.html
-node tools/simtest.js            # 1652 headless assertions, no DOM
+node tools/simtest.js            # 1750 headless assertions, no DOM
 node tools/build.mjs             # -> dist/resonant.html, one self-contained file
 ```
 
@@ -472,7 +472,16 @@ surface without gaining a second control.
   disagree about which one it is.
 - **Tides scale as the cube of distance**, so a close small moon out-pulls a
   distant large one, and several moons produce a genuinely messy tide with
-  occasional spring alignments rather than simply a bigger one.
+  occasional spring alignments rather than simply a bigger one. The waterline
+  used for drawing and for "am I submerged?" follows that tide; hydrosphere
+  itself is never mutated.
+
+Embodied on a planet you walk a **lon/lat tangent plane** against the derived
+heightfield. Near the ground the camera is a rich side-on slice (multi-biome
+silhouette, live waterline). Climb, tap the scene tag, or press C and it becomes
+a 48×32 freeroam neighbourhood of the same samples. Observing still uses the
+globe. Switching never teleports: pose is `(lon, lat, altitude)` and nothing
+about the sphere is stored.
 
 ### And silence where there is no medium
 
@@ -822,7 +831,7 @@ revealed) and reads its dialogue off the rendered DOM.
 ## Status
 
 **Complete as designed.** Every phase of the plan this was built against has
-landed, and the invariants are held by 1652 assertions rather than by intention:
+landed, and the invariants are held by 1750 assertions rather than by intention:
 
 - All **22 rungs** have a scope of their own, every one reachable by turning Σ,
   none absorbed by a scope that is not about it.
@@ -836,9 +845,7 @@ landed, and the invariants are held by 1652 assertions rather than by intention:
 What a next pass would most usefully do, in order of how much it would change
 the game:
 
-- **Bloom cost in the attunement field.** The world buffer removes the flush;
-  the remaining threshold/blur is still the dearest post pass.
-- **A census of rumours.** Neighbour sampling is hashed and capped; widening
-  it is safe and cheap compared to a full sector walk.
-- **Guide copy for riding a culture.** The symbiont now works in orbit when a
-  civilisation is selected. The live guide still leads with riding a creature.
+- **Feel of a sector crossing.** Vacuum drift now changes `galaxy.sx/sy`; the
+  map still recentres in one frame.
+- **Foam remains embark-blocked.** A foam-native body would need its own
+  medium, not a weakening of `embark`.

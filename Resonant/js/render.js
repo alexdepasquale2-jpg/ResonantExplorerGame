@@ -939,7 +939,7 @@
    * needs a lower bar or nothing bleeds at all.
    */
   const BLOOM = {
-    field:     { amt: 0.85, thr: 0.34 },
+    field:     { amt: 0.85, thr: 0.34, stride: 3 },
     foam:      { amt: 1.15, thr: 0.30 },
     shells:    { amt: 0.95, thr: 0.34 },
     molecular: { amt: 0.75, thr: 0.38 },
@@ -1095,6 +1095,10 @@
       drawReticle(ctx, game, t);
       drawCentre(ctx, game, t, spec);
 
+      if (game.inhabiting && game.body && !inFoam && RS.worldrender && RS.worldrender.drawVesselGlyph) {
+        RS.worldrender.drawVesselGlyph(ctx, game, sx(game.body.x), sy(game.body.y));
+      }
+
       /* The live primitives for whatever you are working on, stacked in the
        * gap between the reticle and the instruments. Anchored to the viewport
        * rather than to the node: a readout that chases a drifting node is
@@ -1179,7 +1183,7 @@
       const tr = game.scene ? game.scene.transition : 0;
       const amt = b.amt * (1 + tr * 1.4) * (game.settings.reduceMotion ? 0.6 : 1);
       if (worldBuf) {
-        RS.bloom.captureWorld(view.w, view.h, b.thr * (1 - tr * 0.35));
+        RS.bloom.captureWorld(view.w, view.h, b.thr * (1 - tr * 0.35), b.stride);
         displayCtx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
         displayCtx.clearRect(0, 0, view.w, view.h);
         RS.bloom.blit(displayCtx, view.w, view.h);

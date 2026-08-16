@@ -137,9 +137,9 @@
     return { canvas: world, ctx: wctx };
   }
 
-  function captureWorld(w, h, threshold) {
+  function captureWorld(w, h, threshold, stride) {
     if (!enabled || !world) return;
-    capture(world, w, h, threshold);
+    capture(world, w, h, threshold, stride);
   }
 
   function blit(ctx, w, h) {
@@ -147,11 +147,14 @@
     ctx.drawImage(world, 0, 0, ww, wh, 0, 0, w, h);
   }
 
-  /* Called on a finished source. Reads that image into the bloom buffer. */
-  function capture(canvas, w, h, threshold) {
+  /* Called on a finished source. Reads that image into the bloom buffer.
+   * `stride` skips frames; the attunement field passes 3 because that scope
+   * is the dearest post in the game and bloom is low-frequency there. */
+  function capture(canvas, w, h, threshold, stride) {
     if (!enabled) return;
     if (!ensure(w, h)) return;
-    if (valid && (frame++ % STRIDE) !== 0) return;
+    const skip = stride == null ? STRIDE : Math.max(1, stride | 0);
+    if (valid && (frame++ % skip) !== 0) return;
     frame = 1;
     const t = threshold == null ? 0.42 : threshold;
 

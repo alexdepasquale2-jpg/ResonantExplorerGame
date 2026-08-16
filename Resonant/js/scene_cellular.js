@@ -183,6 +183,42 @@
     /* Cytoplasmic streaming. The cell is not still and should never look it —
      * a static interior reads as a diagram rather than as a living thing. */
     s.cellT = (s.cellT || 0) + dt * 0.6;
+    tickPlace(game, dt);
+  }
+
+  /* Live pose of an organelle, matching the renderer so collision and drawing
+   * agree. */
+  function organellePose(o, ct) {
+    const a = Math.atan2(o.y, o.x) + ct * o.drift;
+    const r = Math.hypot(o.x, o.y) * (1 + Math.sin(ct * 0.8 + o.phase) * 0.05);
+    return { x: Math.cos(a) * r, y: Math.sin(a) * r };
+  }
+
+  /* Bind the vessel into cell space: membrane wall, organelle obstacles and
+   * attractors from the same essence axes used everywhere else. */
+  function tickPlace(game, dt) {
+    if (!game.inhabiting || !game.body) return;
+    const s = game.scene;
+    const cell = s.cell;
+    if (!cell) return;
+    const body = game.body;
+    RS.vessel.confine(body, 0.92);
+    const ct = s.cellT || 0;
+    for (let i = 0; i < cell.organelles.length; i++) {
+      const o = cell.organelles[i];
+      const pose = organellePose(o, ct);
+      const dx = body.x - pose.x, dy = body.y - pose.y;
+      const d = Math.hypot(dx, dy) + 1e-4;
+      const ess = o.essence || {};
+      if (ess.id === 'attractor' || ess.persistence > 0.85) {
+        body.vx -= dx / d * 0.18 * dt;
+        body.vy -= dy / d * 0.18 * dt;
+      } else if (d < o.size * 1.15) {
+        const n = (o.size * 1.15 - d) / (o.size * 1.15);
+        body.vx += dx / d * n * 2.4;
+        body.vy += dy / d * n * 2.4;
+      }
+    }
   }
 
   /* ── The only-here consequence ────────────────────────────────────────────
@@ -225,6 +261,6 @@
 
   RS.cellular = {
     TYPES, typeFor, reasonSterile, cellAt, patchOf,
-    enter, nextCell, tick, expressFrom, readout
+    enter, nextCell, tick, tickPlace, organellePose, expressFrom, readout
   };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));
