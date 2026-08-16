@@ -431,8 +431,9 @@
     const here = inPresence(game, planet);
     if (!here && !relay) return rec.awareness;
     const presence = here ? 1 : 0.42;
+    const chorus = (planet && planet.chorus) ? planet.chorus : 0;
     const rate = (0.012 + rf * 0.05 + built * 0.03 + (relay && !here ? 0.008 : 0)) *
-      (0.5 + civ.tech) * civ.disposition.contact * presence;
+      (0.5 + civ.tech) * civ.disposition.contact * presence * (1 + chorus * 0.8);
     rec.awareness = clamp01(rec.awareness + rate * dt);
     return rec.awareness;
   }

@@ -122,7 +122,7 @@
       prim: ['nest', 'order'],
       blurb: 'The small set of shapes every other layer keeps rediscovering.',
       rules: 'Essences appear undisguised here. Recognition is worth more than yield.',
-      yield: 23.0, drift: 0.4
+      yield: 28.0, drift: 0.4
     },
     {
       id: 'noetic', name: 'Noetic', glyph: '◈',

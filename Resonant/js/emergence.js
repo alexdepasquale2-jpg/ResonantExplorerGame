@@ -8,7 +8,7 @@
  * (cosmos.js). A band declares which primitives are live (spectrum.js). A tier
  * declares how fast and how they are drawn.
  *
- *     64 authored numbers  ×  6 functions  =  1536 distinct situations
+ *     80 authored numbers  ×  6 functions  =  1920 distinct situations
  *
  * ── Why this and not twelve hand-written modes ────────────────────────────
  *
@@ -27,7 +27,7 @@
  * ── Contract ──────────────────────────────────────────────────────────────
  *
  * Every function here is pure, allocation-free (writes into a caller-owned
- * `out`), finite for all 16 essences × 22 tiers, and reads *all four* axes so
+ * `out`), finite for all 20 essences × 22 tiers, and reads *all four* axes so
  * no essence is inert in any primitive. They are called per node per frame, so
  * they must stay cheap — no trigonometry beyond one sin/cos, no allocation.
  */

@@ -31,7 +31,7 @@ That one decision is why a 22-rung ladder of scopes costs almost nothing, why
 saves are ~2 kB, and why an alternative-physics universe is possible at all.
 
 ```bash
-node tools/simtest.js      # 1775 assertions — must be green before you commit
+node tools/simtest.js      # 2000 assertions — must be green before you commit
 node tools/build.mjs       # emits dist/resonant.html, one self-contained file
 python3 -m http.server 8000   # then open /Resonant/index.html
 ```
@@ -49,7 +49,7 @@ There are **no per-layer minigames**. There are six functions in
 anywhere is one or more of them, parameterised by the four numbers an essence
 carries and scaled by the rung's clock.
 
-- 16 essences × 4 axes (`complexity, branching, symmetry, persistence`) = **64
+- 20 essences × 4 axes (`complexity, branching, symmetry, persistence`) = **80
   authored numbers**, in `js/fractal.js`.
 - A band declares which primitives are live (`prim: [...]` in `js/spectrum.js`).
   That *is* the layer's gameplay.
@@ -103,7 +103,7 @@ stays embark-blocked.
 
 ### 2.3 The test suite is the specification
 
-`tools/simtest.js` is 1775 assertions and about half the value of this
+`tools/simtest.js` is 2000 assertions and about half the value of this
 repository. It runs headless in Node against the real modules (including
 `ui.js`, `audio.js` — the HTML builders are pure string functions).
 
@@ -248,23 +248,22 @@ rather than a number.
 
 ## 7. What to do next, in order of value
 
-The vessel open-world pass, its follow-up, and the world-visuals / earn pass
-have landed: planetary geology, lon/lat freeroam plus rich side-on (vegetation,
-clouds, slope-lit neighbourhood, globe specular and city lights), place-aware
-vessel glyphs, galaxy vacuum drift as a real `sx/sy` address change with a
-short toast, a player-facing camera cycle (`C` / scene tag), downhill fall-line
-slides, a wider rumour census, cheaper bloom in the attunement field, guide
-copy for riding a culture from orbit, **extractors that actually pay idle Ψ**,
-and a **world pulse** clicker (`game.surveys[planetKey] = { work, lastAt }`).
+The vessel open-world pass, its follow-up, the world-visuals / earn pass,
+the player-facing dopamine pass (`docs/IDEAL_PLAY.md` P0–P8), and the
+generative loop expansion have landed: firsts, then campaigns. Gnosis
+earns attunements (foresight ghosts, hunt destinations, a lattice in the
+codex). Sparse marks exist at planet, star, and filament. The flucton is
+the foam-native body (`MEDIUM.FOAM`); walkers still cannot embark there.
+A late **new seed** keeps understanding and resets places. Hold stays
+the game.
 
 What is still worth doing:
 
-1. **Foam remains embark-blocked.** That is the live rule (`Σ` is vertical
-   while embodied). If a later pass wants a foam-native body, it has to be
-   a new medium, not a weakening of `embark`.
-2. **Sample budgets stay fixed.** Do not grow the profile, neighbourhood, or
+1. **Sample budgets stay fixed.** Do not grow the profile, neighbourhood, or
    globe grids with zoom. If a scope feels empty, derive a different question
    of the same samples.
+2. **New verbs stay primitives or sparse deltas.** A quest log, a second
+   stick, or a third clicker would be the wrong kind of more.
 
 ---
 
@@ -286,7 +285,7 @@ What is still worth doing:
 ## 9. Verification checklist before you push
 
 ```bash
-node tools/simtest.js     # 1775 assertions, zero failures
+node tools/simtest.js     # 2000 assertions, zero failures
 node tools/build.mjs      # single file still builds
 ```
 

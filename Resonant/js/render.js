@@ -761,6 +761,60 @@
         ctx.stroke();
       }
     }
+
+    drawForesightGhost(ctx, game, n, r, a, t);
+  }
+
+  /* Predicted primitives drawn on the node itself once gnosis has anything
+   * to say. Blank axes stay blank (the ghost uses population means and may
+   * be wrong — that is the lesson). At attunement 4 the ghost lands on the
+   * real window *before* it opens. */
+  function drawForesightGhost(ctx, game, n, r, a, t) {
+    if (!n.man || !n.man.essence || !RS.fractal.attuneLevel) return;
+    const level = RS.fractal.attuneLevel(game, n.man.essence.id);
+    if (level < 1) return;
+    const band = n.band || RS.spectrum.BANDS[n.man.bandIndex];
+    if (!band) return;
+    const pred = RS.fractal.predictedEssence(game, n.man.essence.id, n.__predEss || (n.__predEss = {}));
+    if (!pred) return;
+    const conf = pred.confidence || (level / 4);
+    const alpha = a * (0.18 + conf * 0.42) * (n.resolved > 0.2 ? 1 : 0.55);
+    ctx.save();
+    if (RS.spectrum.usesPrim(band, 'gate')) {
+      const g = RS.emergence.GATE(pred, game.dials.space.value, game.field.rt + n.gatePhase, n.__predGate || (n.__predGate = {}));
+      const open = level >= 4 ? 1 : g.open;
+      ctx.strokeStyle = hsl(n.man.hue + 40, 0.55, 0.7, alpha * (0.35 + open * 0.55));
+      ctx.lineWidth = Math.max(1, px(0.004));
+      ctx.setLineDash([px(0.01), px(0.012)]);
+      ctx.beginPath();
+      ctx.arc(sx(n.x), sy(n.y), px(r * 2.15), -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * g.duty);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    if (RS.spectrum.usesPrim(band, 'flow')) {
+      const f = RS.emergence.FLOW(pred, n.x, n.y, game.field.t, n.__predFlow || (n.__predFlow = {}));
+      const ang = Math.atan2(f.gy, f.gx);
+      const reach = 0.06 + 0.10 * clamp01(f.strength);
+      ctx.strokeStyle = hsl(f.divergence > 0.5 ? 12 : 168, 0.7, 0.62, alpha * 0.7);
+      ctx.lineWidth = Math.max(1, px(0.004));
+      ctx.beginPath();
+      ctx.moveTo(sx(n.x), sy(n.y));
+      ctx.lineTo(sx(n.x + Math.cos(ang) * reach), sy(n.y + Math.sin(ang) * reach));
+      ctx.stroke();
+    }
+    if (RS.spectrum.usesPrim(band, 'twin') && !n.collapsed) {
+      const tw = RS.emergence.TWIN(pred, n.man.seed, n.__predTwin || (n.__predTwin = {}));
+      const sep = 0.35 + (tw.separation || n.twinSep || 0.3) * 1.3;
+      const ta = n.ang + Math.PI * sep;
+      ctx.strokeStyle = hsl(n.man.hue, 0.4, 0.7, alpha * 0.45);
+      ctx.lineWidth = Math.max(1, px(0.003));
+      ctx.setLineDash([px(0.008), px(0.01)]);
+      ctx.beginPath();
+      ctx.arc(sx(Math.cos(ta) * n.rad), sy(Math.sin(ta) * n.rad), px(r * 0.7), 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.restore();
   }
 
   // --- the observer --------------------------------------------------------
@@ -814,6 +868,26 @@
       ctx.beginPath();
       ctx.arc(view.cx, view.cy, R0, a0, a0 + (a1 - a0) * fill);
       ctx.stroke();
+      /* First lock: a one-shot ghost on the φ arc so the player can see which
+       * knob to drag without a paragraph. Retires after the first crystal. */
+      if (i === 0 && (game.stats.crystals || 0) === 0) {
+        const pulse = 0.45 + 0.35 * Math.sin(t * 3.2);
+        ctx.strokeStyle = hsl(187, 0.95, 0.72, pulse);
+        ctx.lineWidth = Math.max(3, px(0.016));
+        ctx.beginPath();
+        ctx.arc(view.cx, view.cy, R0 + px(0.018), a0, a1);
+        ctx.stroke();
+      }
+    }
+    if ((game.stats.crystals || 0) === 0 && n) {
+      ctx.strokeStyle = hsl(187, 0.8, 0.7, 0.28);
+      ctx.lineWidth = Math.max(1, px(0.004));
+      ctx.setLineDash([px(0.012), px(0.01)]);
+      ctx.beginPath();
+      ctx.moveTo(view.cx, view.cy);
+      ctx.lineTo(sx(n.x), sy(n.y));
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
     ctx.restore();
   }

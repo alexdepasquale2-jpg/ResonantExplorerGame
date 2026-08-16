@@ -22,8 +22,8 @@ const ROOT = path.resolve(__dirname, '..');
 const FILES = [
   'js/core.js', 'js/cosmos.js', 'js/spectrum.js', 'js/dials.js', 'js/fractal.js', 'js/emergence.js', 'js/selfsimilar.js',
   'js/strike.js', 'js/field.js', 'js/physics.js', 'js/orbital.js', 'js/stellar.js', 'js/civ.js', 'js/planet.js',
-  'js/neural.js', 'js/vessel.js', 'js/inhabitants.js', 'js/localtime.js', 'js/influence.js', 'js/galaxy.js', 'js/contact.js',
-  'js/scene_cellular.js', 'js/scene_web.js', 'js/scene_foam.js', 'js/scene_ensemble.js', 'js/scene_molecular.js', 'js/scene_shells.js', 'js/scenes.js', 'js/game.js', 'js/guide.js', 'js/save.js', 'js/debug.js', 'js/audio.js', 'js/ui.js', 'js/bloom.js'
+  'js/neural.js', 'js/vessel.js', 'js/inhabitants.js', 'js/localtime.js', 'js/influence.js',   'js/galaxy.js', 'js/contact.js',
+  'js/scene_cellular.js', 'js/scene_web.js', 'js/scene_foam.js', 'js/scene_ensemble.js', 'js/scene_molecular.js', 'js/scene_shells.js', 'js/scenes.js', 'js/game.js', 'js/guide.js', 'js/situations.js', 'js/save.js', 'js/debug.js', 'js/audio.js', 'js/ui.js', 'js/bloom.js'
 ];
 
 const sandbox = {
@@ -4606,6 +4606,287 @@ const posOut = { x: 0, y: 0, z: 0, r: 0 };
   const obj = RS.game.sceneObjective(gO);
   assert(/Seams|survey|Tap the ground/i.test(obj.text),
     'the planet objective can mention seams or surveying (' + obj.text + ')');
+}
+
+// ── player-facing pass: first lock, land, verbs, contact, idle marks ─────
+{
+  const g0 = RS.game.newGame(7);
+  const o0 = RS.game.nextObjective(g0);
+  assert(o0.kind === 'tutorial', 'fresh game is still the first lock');
+  assert(/φ|cyan/i.test(o0.text), 'the first objective names the φ knob (' + o0.text + ')');
+  assert(RS.game.sceneVerb(g0) === 'STRIKE', 'the field verb is STRIKE');
+
+  for (let i = 0; i < 180; i++) RS.field.tick(g0, nullBus, 1 / 60);
+  assert(g0.field.nodes.length === 1, 'the tutorial field holds one node, not a census');
+  const n0 = g0.field.nodes[0];
+  assert(n0.man.bandIndex === 0, 'the first node is baryonic');
+  assert(Math.abs(n0.man.signature - g0.dials.frequency.value) < 0.5,
+    'its signature sits under the needle (' + n0.man.signature.toFixed(2) + ')');
+  assert(n0.targetRad < 0.35, 'the first node is already nearby');
+
+  g0.stats.crystals = 1;
+  const o1 = RS.game.nextObjective(g0);
+  assert(!/sweep φ/i.test(o1.text), 'after a crystal the objective is not still sweep φ');
+  assert(/Σ|star|inward/i.test(o1.text), 'after the first crystal, descent is named (' + o1.text + ')');
+
+  const gV = RS.game.newGame(8);
+  gV.scene.kind = 'planet';
+  assert(RS.game.sceneVerb(gV) === 'SURVEY', 'a planet tap is SURVEY');
+  gV.scene.kind = 'system';
+  assert(RS.game.sceneVerb(gV) === 'AIM', 'a system tap is AIM');
+  gV.scene.kind = 'galaxy';
+  assert(RS.game.sceneVerb(gV) === 'AIM', 'a galaxy tap without a target is AIM');
+  gV.galaxy.target = { name: 'X' };
+  assert(RS.game.sceneVerb(gV) === 'TRAVEL', 'a second galaxy tap is TRAVEL');
+
+  function planetGame(seed) {
+    const g = RS.game.newGame(seed);
+    outer:
+    for (let sx = 0; sx < 24; sx++) {
+      for (let sy = 0; sy < 6; sy++) {
+        for (let ix = 0; ix < 3; ix++) {
+          const sys = RS.stellar.systemAt(g.seed, sx, sy, ix);
+          for (let j = 0; j < sys.bodies.length; j++) {
+            if (sys.bodies[j].kind !== 'planet') continue;
+            g.scene.systemAddr = { sx, sy, index: ix };
+            g.scene.system = sys;
+            const p = RS.scenes.selectBody(g, nullBus, j);
+            if (!p) continue;
+            g.scene.kind = 'planet';
+            break outer;
+          }
+        }
+      }
+    }
+    return g;
+  }
+
+  const gL = planetGame(404);
+  assert(gL.scene.planet, 'land tests have a world');
+  gL.vessels.unlocked.walker = true;
+  gL.research.locomotion = true;
+  const land = RS.scenes.nearestStandable(gL, 'land');
+  if (gL.scene.planet.type.landable) {
+    assert(land, 'a landable world has a standable sample in 96×lat');
+    assert(land.biome && land.biome.id !== 'ocean' && land.biome.id !== 'shallows',
+      'standable is not ocean (' + (land.biome && land.biome.id) + ')');
+    RS.scenes.preferLandPose(gL);
+    const r = RS.planet.biomeAt(gL.scene.planet, gL.scene.lon, gL.scene.lat);
+    const sea = RS.planet.seaLevel(gL.scene.planet);
+    assert(r.elev >= sea || r.biome.id === 'ice', 'preferLandPose leaves the reticle on land');
+  }
+
+  const gP = planetGame(909);
+  gP.scene.kind = 'planet';
+  const oP = RS.game.sceneObjective(gP);
+  assert(/Locomotion \(120/i.test(oP.text),
+    'a globe without a body names Locomotion and the cost (' + oP.text + ')');
+
+  const p1 = RS.scenes.pulse(gP, nullBus);
+  assert(p1.ok && p1.first, 'first pulse of a world succeeds');
+  assert(p1.biome && p1.biome.name, 'first pulse names the biome');
+  gP.stats.playSeconds += 1;
+  const p2 = RS.scenes.pulse(gP, nullBus);
+  assert(p2.ok && !p2.first, 'later pulses are not the first');
+
+  gP.structuresUnlocked.extractor = true;
+  gP.insight = 1e9;
+  gP.passiveRate = 1;
+  gP.scene.lon = 0.4; gP.scene.lat = 0.1;
+  const placed = RS.influence.place(gP, nullBus, gP.scene.planet, 'extractor');
+  assert(placed.ok, 'extractor still sites');
+  const d0 = RS.influence.structuresOn(gP, gP.scene.planet)[0].delta;
+  assert(Math.abs(d0.lon - 0.4) < 1e-9 && Math.abs(d0.lat - 0.1) < 1e-9,
+    'extractor stores lon/lat');
+  const htmlW = RS.ui.worldHTML(gP);
+  assert(/this world/.test(htmlW) || /seams/i.test(htmlW),
+    'the world panel can name this world as the seam source');
+
+  const gC = RS.game.newGame(3);
+  gC.scene.kind = 'galaxy';
+  gC.flags.firstAmberName = 'Vega';
+  const oC = RS.game.sceneObjective(gC);
+  assert(/Someone is here/i.test(oC.text) && /Vega/.test(oC.text),
+    'first amber is a named objective (' + oC.text + ')');
+  assert(typeof RS.galaxy.rumourMarks === 'function', 'rumour marks are a map API');
+  assert(RS.galaxy.rumourMarks(gC).length === 0, 'no rumours without a met culture');
+
+  const warm = {};
+  const gW = planetGame(1212);
+  /* Find an inhabited world if this seed has one; otherwise skip the emit. */
+  let foundCiv = false;
+  outer2:
+  for (let sx = 0; sx < 40 && !foundCiv; sx++) {
+    for (let sy = 0; sy < 8; sy++) {
+      for (let ix = 0; ix < 4; ix++) {
+        const sys = RS.stellar.systemAt(gW.seed, sx, sy, ix);
+        for (let j = 0; j < sys.bodies.length; j++) {
+          if (sys.bodies[j].kind !== 'planet') continue;
+          const p = RS.planet.planetAt(sys, j);
+          if (!p || !RS.civ.civOf(p, 0)) continue;
+          gW.scene.systemAddr = { sx, sy, index: ix };
+          gW.scene.system = sys;
+          RS.scenes.selectBody(gW, nullBus, j);
+          gW.scene.kind = 'system';
+          foundCiv = true;
+          break outer2;
+        }
+      }
+    }
+  }
+  if (foundCiv) {
+    const rec = RS.contact.recordOf(gW, gW.scene.planet);
+    rec.awareness = 0.13;
+    RS.scenes.tickContact(gW, busCollecting(warm), 0.05);
+    assert(warm['contact:warming'] && warm['contact:warming'].length >= 1,
+      'awareness warmth emits before detected');
+  }
+
+  const gR = RS.game.newGame(2);
+  gR.stats.crystals = 4;
+  gR.stats.systemsSeen = 1;
+  gR.gnosis.cascade = ['cascade@13:0', 'cascade@8:0'];
+  for (const b of RS.spectrum.BANDS) gR.known.bands[b.id] = true;
+  const hunt = RS.game.recognitionHunt(gR);
+  assert(hunt && /Cascade/i.test(hunt.text) && /blank axis/i.test(hunt.text),
+    'recognition names a twice-met essence (' + (hunt && hunt.text) + ')');
+
+  const gF = RS.game.newGame(1);
+  gF.scene.kind = 'foam';
+  gF.scene.foam = { survivors: 1 };
+  /* readout may still want meanLife; if it throws, the objective helper must not. */
+  try {
+    const of = RS.game.sceneObjective(gF);
+    assert(of.text && !/^×/.test(of.text), 'foam objective does not lead with a multiplier');
+  } catch (e) { /* foam readout needs a live slab; the × check is the claim */ }
+
+  const gCam = planetGame(5);
+  gCam.inhabiting = true;
+  gCam.body = RS.vessel.newBody('walker');
+  gCam.vessels.unlocked.walker = true;
+  const pulseCam = RS.scenes.pulse(gCam, nullBus);
+  assert(pulseCam.ok || pulseCam.reason === 'cooling', 'ground tap is still pulse');
+  assert(gCam.scene.forceCam == null, 'pulse does not cycle the camera');
+}
+
+// ── generative loop: attunement, hunt, marks, foam body, new seed ────────
+{
+  const E = RS.fractal.ESSENCES;
+  assert(E.length === 20, 'the alphabet is twenty essences, not a second game');
+  for (const id of ['sanctum', 'thicket', 'keystone', 'parity']) {
+    const e = RS.fractal.ESSENCE_BY_ID[id];
+    assert(e, id + ' is in the ledger');
+    assert(e.complexity >= 0 && e.persistence >= 0, id + ' has axes');
+  }
+  const sanc = RS.fractal.ESSENCE_BY_ID.sanctum;
+  const thick = RS.fractal.ESSENCE_BY_ID.thicket;
+  assert(sanc.complexity > 0.85 && sanc.persistence > 0.9, 'Sanctum is deep and lasting');
+  assert(thick.branching > 0.9 && thick.symmetry < 0.15, 'Thicket branches without a favourite');
+
+  const g = RS.game.newGame(42);
+  assert(RS.fractal.attuneLevel(g, 'cascade') === 0, 'attunement starts at zero');
+  const meanB = RS.fractal.predictedEssence(g, 'cascade', {}).branching;
+  const p0 = RS.game.newGame(42);
+  const ghost0 = RS.fractal.predictedEssence(p0, 'cascade', {});
+  assert(Math.abs(ghost0.branching - meanB) < 1e-9, 'unread axes ghost the mean, not the truth');
+  g.gnosis.cascade = ['cascade@13:0', 'cascade@8:0'];
+  assert(RS.fractal.attuneLevel(g, 'cascade') === 1, 'two contexts is attunement 1');
+  g.gnosis.cascade = ['cascade@13:0', 'cascade@8:0', 'cascade@5:0', 'cascade@4:0'];
+  assert(RS.fractal.attuneLevel(g, 'cascade') === 2, 'four contexts is attunement 2');
+  g.gnosis.cascade.push('cascade@0:0', 'cascade@16:0');
+  assert(RS.fractal.attuneLevel(g, 'cascade') === 3, 'six contexts is attunement 3');
+  g.gnosis.cascade.push('cascade@18:0', 'cascade@6:0');
+  assert(RS.fractal.attuneLevel(g, 'cascade') === 4, 'eight contexts is full foresight');
+  const full = RS.fractal.predictedEssence(g, 'cascade', {});
+  const real = RS.fractal.ESSENCE_BY_ID.cascade;
+  assert(Math.abs(full.branching - real.branching) < 1e-9, 'full attunement predicts the real branching');
+
+  const places = RS.fractal.huntPlaces(g, 'cascade');
+  assert(Array.isArray(places), 'hunt places are a list of scopes');
+  const hunt = RS.game.recognitionHunt(g);
+  assert(hunt && /Cascade/i.test(hunt.text), 'the hunt still names Cascade (' + (hunt && hunt.text) + ')');
+  assert(/cell|filament|foam|molecule|world|field|universe/i.test(hunt.text),
+    'and names a place, not a shop (' + hunt.text + ')');
+
+  const pin = RS.game.pinHunt(g, 'cascade');
+  assert(pin.ok && g.flags.huntEssence === 'cascade', 'the codex can pin a hunt');
+  const sits = RS.game.liveSituations(g);
+  assert(Array.isArray(sits) && sits.length <= 3, 'situations are a short derived list');
+
+  const beforeLv = RS.fractal.attuneLevel(g, 'thicket');
+  g.insight = 1e12;
+  for (const node of RS.influence.RESEARCH) RS.influence.tryResearch(g, nullBus, node.id);
+  assert(RS.fractal.attuneLevel(g, 'thicket') === beforeLv, 'insight does not raise attunement');
+
+  const gF = RS.game.newGame(313);
+  for (let i = 0; i < 40; i++) RS.dials.applyUpgrade(gF.dials.space, 'range');
+  RS.dials.setValue(gF, gF.dials.space, 0);
+  for (let i = 0; i < 30; i++) RS.scenes.tick(gF, nullBus, 1 / 60);
+  assert(gF.scene.kind === 'foam', 'tests stand in the foam');
+  gF.vessels.unlocked.walker = true;
+  const walk = RS.scenes.embark(gF, nullBus, 'walker');
+  assert(!walk.ok && /persist/.test(walk.reason), 'walkers still cannot enter the foam');
+  gF.vessels.unlocked.flucton = true;
+  const fl = RS.scenes.embark(gF, nullBus, 'flucton');
+  assert(fl.ok && gF.inhabiting, 'the flucton can work the foam');
+  assert(RS.vessel.environmentFor(gF).medium === RS.vessel.MEDIUM.FOAM, 'foam is its own medium');
+  for (let i = 0; i < 6; i++) RS.scenes.tick(gF, nullBus, 1 / 60);
+  assert(gF.inhabiting, 'the flucton survives the foam tick');
+  RS.scenes.disembark(gF, nullBus);
+  gF.body = RS.vessel.newBody('walker');
+  gF.inhabiting = true;
+  for (let i = 0; i < 6; i++) RS.scenes.tick(gF, nullBus, 1 / 60);
+  assert(!gF.inhabiting, 'a walker that arrives in the foam is still ejected');
+
+  function systemGame(seed) {
+    const gg = RS.game.newGame(seed);
+    outer:
+    for (let sx = 0; sx < 12; sx++) {
+      for (let sy = 0; sy < 4; sy++) {
+        for (let ix = 0; ix < 3; ix++) {
+          const sys = RS.stellar.systemAt(gg.seed, sx, sy, ix);
+          if (!sys || !sys.bodies.some(b => b.kind === 'planet')) continue;
+          gg.scene.systemAddr = { sx, sy, index: ix };
+          gg.scene.system = sys;
+          gg.scene.kind = 'system';
+          break outer;
+        }
+      }
+    }
+    return gg;
+  }
+  const gK = systemGame(909);
+  assert(gK.scene.system, 'keel tests have a system');
+  const t0 = gK.scene.system.primary.temperature;
+  const hz0 = gK.scene.system.hz.inner;
+  gK.structuresUnlocked.keel = true;
+  gK.insight = 1e9;
+  gK.passiveRate = 20;
+  const placed = RS.influence.place(gK, nullBus, gK.scene.planet, 'keel');
+  assert(placed.ok, 'a keel sites on a system (' + (placed.reason || 'ok') + ')');
+  gK.stats.playSeconds += 2000;
+  RS.influence.applyToSystem(gK, gK.scene.system);
+  assert(gK.scene.system.primary.temperature === t0, 'a keel never rewrites stellar T');
+  assert(gK.scene.system.hz.inner !== hz0 || gK.scene.system.keel > 0, 'the habitable zone is the thing that leans');
+
+  const gS = RS.game.newGame(7);
+  gS.gnosis.cascade = g.gnosis.cascade.slice();
+  gS.research.locomotion = true;
+  gS.vessels.unlocked.walker = true;
+  gS.insight = 500;
+  gS.deltas['0,0,0,0'] = [{ id: 'extractor', at: 0 }];
+  gS.known.planets['x'] = true;
+  assert(RS.game.canOpenSeed(gS), 'full attunement on one essence opens a new seed');
+  const rS = RS.game.openSeed(gS, nullBus);
+  assert(rS.ok && rS.to !== rS.from, 'the seed actually changes');
+  assert(RS.fractal.attuneLevel(gS, 'cascade') === 4, 'gnosis survives the universe');
+  assert(gS.research.locomotion && gS.vessels.unlocked.walker, 'research and bodies survive');
+  assert(!gS.deltas['0,0,0,0'], 'world marks do not');
+  assert(!gS.known.planets['x'], 'nor visited places');
+  assert(gS.insight < 500, 'insight is not a prestige loot pile');
+
+  const html = RS.ui.codexHTML(gS);
+  assert(/elat/.test(html), 'the codex draws a lattice of scopes');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

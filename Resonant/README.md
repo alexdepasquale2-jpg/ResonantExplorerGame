@@ -12,7 +12,7 @@ backend, no assets. Runs offline from `index.html`.
 
 ```
 python3 -m http.server 8000      # then open http://localhost:8000/index.html
-node tools/simtest.js            # 1750 headless assertions, no DOM
+node tools/simtest.js            # 2000 headless assertions, no DOM
 node tools/build.mjs             # -> dist/resonant.html, one self-contained file
 ```
 
@@ -525,7 +525,7 @@ vital    ▸ nest flow       unity      ▸ all six
 emotive  ▸ flow twin       mnemonic   ▸ order nest
 ```
 
-**16 essences × 4 axes = 64 authored numbers**, and everything else is composed
+**20 essences × 4 axes = 80 authored numbers**, and everything else is composed
 from them. The point is not economy of code — it is that knowledge *transfers*.
 Once you learn that `Cascade` branches (0.90), you know its rhythm subdivides
 five ways, its dependency graph fans out four wide, its nests are wide and

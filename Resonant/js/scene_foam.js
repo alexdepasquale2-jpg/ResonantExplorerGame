@@ -101,6 +101,7 @@
   function eject(game, bus) {
     if (!game.inhabiting) return null;
     const arch = RS.vessel.archOf(game.body);
+    if (arch && arch.medium && arch.medium.indexOf(RS.vessel.MEDIUM.FOAM) >= 0) return null;
     RS.scenes.disembark(game, bus);
     bus.emit('foam:eject', { arch });
     return arch;
@@ -118,15 +119,14 @@
   function tick(game, bus, dt) {
     const s = game.scene;
     const D = game.dials;
-    /* Time here runs at the rung's own clock, which is three orders of
-     * magnitude faster than anywhere the player has been. τ still scales it,
-     * so slowing right down is the only way to work anything — and that is a
-     * real strategy rather than a suggestion. */
     s.foamT = (s.foamT || 0) + dt * Math.abs(D.time.value);
     s.foam = foamAt(game, D.space.value, s.foamT, s.foam);
-    /* A body cannot be taken here at all, so keep enforcing it rather than
-     * only checking on arrival. */
-    if (game.inhabiting) eject(game, bus);
+    /* Existing bodies still cannot be taken here. The flucton is a pair, not
+     * a lump of matter, so it is allowed to stay. */
+    if (game.inhabiting) {
+      const arch = RS.vessel.archOf(game.body);
+      if (!arch || arch.medium.indexOf(RS.vessel.MEDIUM.FOAM) < 0) eject(game, bus);
+    }
   }
 
   /* What working a survivor is worth. Large on purpose: it is rare, it is the

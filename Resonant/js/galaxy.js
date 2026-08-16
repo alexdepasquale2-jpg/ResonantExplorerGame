@@ -263,6 +263,61 @@
       body.x = G.driftX;
       body.y = G.driftY;
     }
+    noteFirstAmber(game, bus);
+  }
+
+  /* First amber in reach is a named event. Civilisations stay rare; invisibility
+   * is what we are refusing. */
+  function noteFirstAmber(game, bus) {
+    if (game.flags && game.flags.firstAmber) return;
+    const stars = game.galaxy.stars || [];
+    for (let i = 0; i < stars.length; i++) {
+      const st = stars[i];
+      if (!st.resolved || !st.inReach) continue;
+      const sv = surveyOf(game, st);
+      if (sv && sv.civ > 0) {
+        if (!game.flags) game.flags = Object.create(null);
+        game.flags.firstAmber = st.key;
+        game.flags.firstAmberName = st.name;
+        if (bus && bus.emit) bus.emit('discover:civ', { star: st, survey: sv });
+        return;
+      }
+    }
+  }
+
+  /* Neighbours a met culture actually knows, as map marks. Cached against the
+   * contact set so a greeting does not re-derive a neighbourhood every frame. */
+  function rumourMarks(game) {
+    let ids = '';
+    for (const k in game.contacts) {
+      const rec = game.contacts[k];
+      if (rec && rec.met) ids += k + ';';
+    }
+    if (!ids) return [];
+    if (game.__rumourKey === ids) return game.__rumourMarks || [];
+    const marks = [];
+    const seen = Object.create(null);
+    for (const k in game.contacts) {
+      const rec = game.contacts[k];
+      if (!rec || !rec.met) continue;
+      const p = RS.influence.planetFromKey(game, k);
+      if (!p) continue;
+      const civ = RS.civ.civOf(p, 0);
+      if (!civ) continue;
+      const nbs = RS.contact.neighboursOf(game, p, civ);
+      for (let i = 0; i < nbs.length; i++) {
+        const n = nbs[i];
+        const addr = n.planet && n.planet.system && n.planet.system.addr;
+        if (!addr) continue;
+        const key = addr.sx + ',' + addr.sy + ',' + addr.index;
+        if (seen[key]) continue;
+        seen[key] = true;
+        marks.push({ sx: addr.sx, sy: addr.sy, index: addr.index, name: n.civ.name, dist: n.dist });
+      }
+    }
+    game.__rumourKey = ids;
+    game.__rumourMarks = marks;
+    return marks;
   }
 
   // ── rendering ────────────────────────────────────────────────────────────
@@ -310,6 +365,12 @@
     /* Placed label rectangles, so names can be skipped where they would
      * collide. Reset every frame; never allocated per star. */
     labelBoxes.length = 0;
+    const rumours = rumourMarks(game);
+    const rumourAt = Object.create(null);
+    for (let ri = 0; ri < rumours.length; ri++) {
+      const m = rumours[ri];
+      rumourAt[m.sx + ',' + m.sy + ',' + m.index] = m;
+    }
     for (let i = stars.length - 1; i >= 0; i--) {
       const st = stars[i];
       const dx = (st.sx + st.jx) - G.sx;
@@ -337,7 +398,17 @@
 
       st.__x = X; st.__y = Y; st.__r = r;
 
-      if (!st.resolved) continue;
+      const rum = rumourAt[st.sx + ',' + st.sy + ',' + st.index];
+      if (rum) {
+        ctx.strokeStyle = 'hsla(45,85%,68%,0.62)';
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([3, 4]);
+        ctx.beginPath(); ctx.arc(X, Y, r * 3.6, 0, TAU); ctx.stroke();
+        ctx.setLineDash([]);
+        st.__rumour = rum.name;
+      }
+
+      if (!st.resolved && !rum) continue;
 
       /* Survey markers, only for resolved stars. These are the reason to look
        * at the map rather than pick the nearest thing. */
@@ -356,7 +427,6 @@
           ctx.beginPath(); ctx.arc(X, Y, r * 3.4, 0, TAU); ctx.stroke();
         }
       }
-
       if (st.visited) {
         ctx.strokeStyle = 'rgba(230,240,255,0.42)';
         ctx.lineWidth = 1;
@@ -468,6 +538,6 @@
   RS.galaxy = {
     LY_PER_SECTOR, WINDOW, newState, starsIn, distanceLy, refresh,
     surveyOf, clearSurveys, selectStar, travelTo, tick, draw, pick,
-    stepSector
+    stepSector, rumourMarks, noteFirstAmber
   };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));

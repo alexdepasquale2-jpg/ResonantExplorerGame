@@ -175,10 +175,18 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   letter-spacing: .04em;
 }
 
+#verb {
+  align-self: flex-start;
+  font-size: 9px; font-weight: 700; letter-spacing: .18em;
+  color: var(--accent);
+  margin-top: 6px;
+  opacity: .85;
+}
+
 #objective {
   align-self: flex-start;
   font-size: 10px; color: var(--dim);
-  margin-top: 5px; max-width: 46ch; line-height: 1.45;
+  margin-top: 3px; max-width: 46ch; line-height: 1.45;
 }
 
 /* ── toasts ───────────────────────────────────────────────────────────── */
@@ -418,9 +426,19 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   margin-top: 8px;
   font-size: 9px; letter-spacing: .2em; font-weight: 700;
   color: var(--accent);
-  transition: color .3s;
+  transition: color .3s, box-shadow .3s, outline-color .3s;
   pointer-events: auto;
   width: max-content;
+}
+#scene-tag.hint {
+  outline: 1px solid hsla(187, 80%, 70%, .8);
+  box-shadow: 0 0 12px hsla(187, 80%, 60%, .45);
+  animation: tag-hint 1.8s ease-out 2;
+}
+@keyframes tag-hint {
+  0% { box-shadow: 0 0 2px hsla(187, 80%, 60%, .2); }
+  40% { box-shadow: 0 0 14px hsla(187, 80%, 70%, .7); }
+  100% { box-shadow: 0 0 4px hsla(187, 80%, 60%, .25); }
 }
 
 #body-bar {
@@ -565,12 +583,22 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 .ess-row {
   display: grid;
   grid-template-columns: 18px 1fr auto auto;
-  grid-template-areas: "g n ax ct" ". f f f";
+  grid-template-areas: "g n ax ct" ". f f f" ". lat lat lat";
   align-items: center; gap: 4px 8px;
   padding: 6px 8px; border-radius: 7px;
   background: rgba(140, 175, 220, .045);
   border: 1px solid transparent;
 }
+.ess-row.hunting { border-color: rgba(125, 211, 252, .35); background: rgba(125, 211, 252, .08); }
+.ess-row[data-hunt] { cursor: pointer; }
+.ess-row .elat {
+  grid-area: lat; display: flex; gap: 3px; align-items: center;
+}
+.ess-row .elat i {
+  width: 6px; height: 6px; border-radius: 50%; display: block;
+  background: rgba(160, 185, 215, .18);
+}
+.ess-row .elat i.on { background: #7dd3fc; }
 .ess-row.unknown { opacity: .38; }
 .ess-row .eg { grid-area: g; font-size: 13px; text-align: center; }
 .ess-row .en { grid-area: n; font-size: 10.5px; min-width: 0; }
