@@ -25,7 +25,7 @@
       const s = localStorage.getItem(KEY);
       if (!s) return null;
       const data = JSON.parse(s);
-      if (!data || data.version !== RS.game.SAVE_VERSION) return null;
+      if (!data || (data.version !== RS.game.SAVE_VERSION && data.version !== 1)) return null;
       return data;
     } catch (e) {
       console.warn('[resonant] save unreadable, starting fresh', e);

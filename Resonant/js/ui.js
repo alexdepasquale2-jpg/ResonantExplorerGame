@@ -174,6 +174,20 @@
         renderDrawer(game, bus);
         return;
       }
+      const hunt = ev.target.closest('[data-hunt]');
+      if (hunt) {
+        const r = RS.game.pinHunt(game, hunt.dataset.hunt);
+        if (r.ok) bus.emit('hunt:pin', { essence: r.essence });
+        renderDrawer(game, bus);
+        return;
+      }
+      const seed = ev.target.closest('[data-seed]');
+      if (seed && seed.dataset.seed === 'open') {
+        const r = RS.game.openSeed(game, bus);
+        if (!r.ok) bus.emit('ui:deny', { reason: 'blocked', message: r.reason });
+        renderDrawer(game, bus);
+        return;
+      }
       const act = ev.target.closest('[data-act]');
       if (act) {
         const kind = act.dataset.act;
@@ -501,7 +515,9 @@
 
     const title = resolved ? man.name : 'Unresolved';
     const sub = resolved
-      ? man.essence.name + (gn ? ' · gnosis ' + gn : '') + (man.rarity ? ' · ' + '★'.repeat(man.rarity) : '')
+      ? man.essence.name + (gn ? ' · gnosis ' + gn : '') +
+        (RS.fractal.attuneLevel ? ' · attune ' + RS.fractal.attuneLevel(game, man.essence.id) : '') +
+        (man.rarity ? ' · ' + '★'.repeat(man.rarity) : '')
       : 'Hold closer to resolve';
     const blocked = n.blocked && n.antecedent
       ? '<div class="ro-block">Blocked — requires ' + n.antecedent.name + ' crystallised first' +
@@ -944,6 +960,37 @@
     }
   }
 
+  function latticePips(game, essenceId) {
+    const have = Object.create(null);
+    const list = game.gnosis[essenceId] || [];
+    for (let i = 0; i < list.length; i++) have[list[i]] = true;
+    const scopes = [
+      { lo: 0, hi: 1, g: 'foam' },
+      { lo: 4, hi: 4, g: 'mol' },
+      { lo: 5, hi: 5, g: 'cell' },
+      { lo: 6, hi: 8, g: 'world' },
+      { lo: 13, hi: 13, g: 'field' },
+      { lo: 14, hi: 17, g: 'web' },
+      { lo: 18, hi: 21, g: 'ens' }
+    ];
+    const nBand = RS.spectrum.BANDS.length;
+    let html = '';
+    for (let s = 0; s < scopes.length; s++) {
+      const sc = scopes[s];
+      let filled = false, any = false;
+      for (let t = sc.lo; t <= sc.hi; t++) {
+        for (let b = 0; b < nBand; b++) {
+          any = true;
+          if (have[essenceId + '@' + t + ':' + b]) { filled = true; break; }
+        }
+        if (filled) break;
+      }
+      html += '<i class="' + (filled ? 'on' : 'off') + '" title="' + sc.g +
+        (filled ? ' — met' : ' — blank') + '"></i>';
+    }
+    return html;
+  }
+
   function codexHTML(game) {
     let h = '<div class="codex-tabs">';
 
@@ -1002,7 +1049,9 @@
         ? Object.keys(e.forms).filter(k => e.forms[k]).map(k => e.forms[k]).slice(0, 4).join(' · ')
         : '';
 
-      h += '<div class="ess-row' + (met ? '' : ' unknown') + '">' +
+      h += '<div class="ess-row' + (met ? '' : ' unknown') +
+        (game.flags && game.flags.huntEssence === e.id ? ' hunting' : '') + '"' +
+        (met ? ' data-hunt="' + e.id + '"' : '') + '>' +
         '<span class="eg">' + (met ? e.glyph : '·') + '</span>' +
         '<span class="en">' + (met ? e.name : '—') +
           '<em>' + (met ? e.trait : 'not yet met') + '</em></span>' +
@@ -1011,6 +1060,7 @@
           (toGo > 0 && met ? '<em>+' + toGo + ' to read</em>' :
             met ? '<em>complete</em>' : '') + '</span>' +
         (forms ? '<span class="ef">' + forms + '</span>' : '') +
+        (met ? '<span class="elat">' + latticePips(game, e.id) + '</span>' : '') +
         '</div>';
     }
     h += '</div></section>';
@@ -1090,7 +1140,13 @@
       '<div>Layers held <b>' + Object.keys(game.known.bands).length + '/' + RS.spectrum.BANDS.length + '</b></div>' +
       '<div>Scales visited <b>' + Object.keys(game.known.tiers).length + '/' + RS.cosmos.TIERS.length + '</b></div>' +
       '<div>Played <b>' + RS.core.fmt(Math.floor(game.stats.playSeconds / 60)) + ' min</b></div>' +
-      '</div></section>';
+      '</div>' +
+      (RS.game.canOpenSeed && RS.game.canOpenSeed(game)
+        ? '<button class="set-row" data-seed="open"><span class="k">Open another seed</span>' +
+          '<span class="d">Understanding survives. Places do not. The essences did not care.</span>' +
+          '<span class="cyc">NEW</span></button>'
+        : '<p class="blurb">A new seed opens once you have stood in another universe, or fully read one essence.</p>') +
+      '</section>';
   }
 
 
@@ -1236,7 +1292,8 @@
       }
       h += '</div>';
     }
-    const buildable = RS.influence.STRUCTURES.filter(x => game.structuresUnlocked[x.id]);
+    const buildable = RS.influence.STRUCTURES.filter(x =>
+      game.structuresUnlocked[x.id] && (!x.scope || x.scope === 'planet'));
     if (buildable.length) {
       h += '<div class="up-rows" style="margin-top:6px">';
       for (const x of buildable) {
@@ -1315,6 +1372,24 @@
       '</div><p class="blurb">The consciousness field is how far you reach. ' +
       'The reality field is how hard your influence bites when it gets there. ' +
       'Both grow from gnosis, research and beacons &mdash; three currencies, one pair of numbers.</p></section>';
+
+    const scopeBuild = RS.influence.STRUCTURES.filter(x => {
+      if (!game.structuresUnlocked[x.id]) return false;
+      if (x.scope === 'system') return game.scene && game.scene.kind === 'system';
+      if (x.scope === 'web') return game.scene && game.scene.kind === 'web';
+      return false;
+    });
+    if (scopeBuild.length) {
+      h += '<section><h3>Marks <em>this scale</em></h3><div class="up-rows">';
+      for (const x of scopeBuild) {
+        const why = RS.influence.canPlace(game, game.scene.planet, x.id);
+        h += '<button class="up-row" data-build="' + x.id + '"' + (why ? ' disabled' : '') + '>' +
+          '<span class="k">' + x.glyph + '</span><span class="lv"></span>' +
+          '<span class="d"><b>' + x.name + '</b> &mdash; ' + x.blurb + '</span>' +
+          '<span class="c">' + (why ? why : fmt(x.cost.insight) + ' &Psi;') + '</span></button>';
+      }
+      h += '</div></section>';
+    }
 
     return h;
   }

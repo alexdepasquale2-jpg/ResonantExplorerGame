@@ -204,6 +204,7 @@
     const s = game.scene;
     s.systemAddr = addr;
     s.system = RS.stellar.systemAt(game.seed, addr.sx, addr.sy, addr.index);
+    if (RS.influence.applyToSystem) RS.influence.applyToSystem(game, s.system);
     s.bodyIndex = -1;
     s.planet = null;
     s.selected = -1;
@@ -447,6 +448,7 @@
   function tickSystem(game, bus, dt) {
     const s = game.scene;
     if (!s.system) return;
+    if (RS.influence.applyToSystem) RS.influence.applyToSystem(game, s.system);
 
     /* Trade is recomputed at most a few times a second, and only for the
      * planets actually present. Prices depend on time only through the
@@ -949,8 +951,11 @@
      * reason is about the *place* and answering "a walker needs a surface"
      * would be true and beside the point. */
     if (game.scene.kind === 'foam') {
-      return { ok: false,
-        reason: 'nothing persists at this scale — there is nothing for a body to be made of' };
+      const archFoam = RS.vessel.BY_ID[archId];
+      if (!archFoam || archFoam.medium.indexOf(RS.vessel.MEDIUM.FOAM) < 0) {
+        return { ok: false,
+          reason: 'nothing persists at this scale — there is nothing for a body to be made of' };
+      }
     }
     const env0 = RS.vessel.environmentFor(game);
     let blocked = RS.vessel.canOperate(arch, env0);

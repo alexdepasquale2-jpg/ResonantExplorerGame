@@ -237,6 +237,20 @@
         if (err < bestErr) { bestErr = err; best = cand; }
       }
       man = best;
+    } else if (RS.fractal.attuneLevel) {
+      /* At attunement 3 the field slightly prefers essences you already know.
+       * Still hashed — six retries, then whatever the address said. */
+      let prefer = false;
+      for (let i = 0; i < RS.fractal.ESSENCES.length; i++) {
+        if (RS.fractal.attuneLevel(game, RS.fractal.ESSENCES[i].id) >= 3) { prefer = true; break; }
+      }
+      if (prefer && RS.fractal.attuneLevel(game, man.essence.id) < 3) {
+        for (let tries = 0; tries < 6; tries++) {
+          addr = nextAddress(field, tierIndex, bandIndex);
+          const cand = RS.fractal.resolve(game.seed, tierIndex, bandIndex, addr.cellX, addr.cellY, addr.slot);
+          if (RS.fractal.attuneLevel(game, cand.essence.id) >= 3) { man = cand; break; }
+        }
+      }
     }
     const band = RS.spectrum.BANDS[bandIndex];
     const h = hashN(man.seed, 31);
@@ -479,7 +493,12 @@
            * what it is for, instead of about attrition, which it is not. */
           const gain = (n.align - need) / (1 - need) * twinDrag * n.gate;
           const before = n.coherence;
-          n.coherence = clamp01(n.coherence + gain * holdRate * dt / holdTimeOf(n));
+          /* Knowing the shape of an essence (attunement ≥2) slightly speeds
+           * the hold you are already winning. Capped at +10% so it never
+           * replaces the hold. */
+          const att = RS.fractal.attuneLevel ? RS.fractal.attuneLevel(game, n.man.essence.id) : 0;
+          const know = att >= 2 ? (1 + Math.min(0.10, (att - 1) * 0.04)) : 1;
+          n.coherence = clamp01(n.coherence + gain * holdRate * know * dt / holdTimeOf(n));
           /* Crossing 25/50/75% is worth marking — the ramp needs waypoints or
            * the last second of a long hold feels unearned. */
           for (const mark of [0.25, 0.5, 0.75]) {

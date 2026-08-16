@@ -50,7 +50,8 @@
    * so honestly instead of pretending an ocean and a cell are the same place. */
   const MEDIUM = {
     VACUUM: 'vacuum', GAS: 'gas', LIQUID: 'liquid',
-    SURFACE: 'surface', ORBIT: 'orbit', CYTOPLASM: 'cytoplasm'
+    SURFACE: 'surface', ORBIT: 'orbit', CYTOPLASM: 'cytoplasm',
+    FOAM: 'foam'
   };
 
   /* ── Archetypes ───────────────────────────────────────────────────────────
@@ -185,6 +186,29 @@
       dialMap: { time: 'urgency', space: 'depth of hold', phase: 'intent', frequency: 'affect band' },
       tier: 4,
       neural: true
+    },
+    {
+      id: 'flucton', name: 'Flucton', glyph: '∿', hue: 291,
+      blurb: 'A pair that has not cancelled. The only body the foam will hold.',
+      medium: [MEDIUM.FOAM],
+      mass: 0.01, thrust: 0.4, dragC: 8, liftC: 0, grip: 0,
+      senseRadius: 0.28, senseBands: 6, capacity: 40, draw: 0.6, regen: 1.8,
+      needs: env => env.medium !== MEDIUM.FOAM
+        ? 'nothing persists here except a pair that has not cancelled'
+        : null,
+      dialMap: { time: 'pair lifetime', space: 'slab depth', phase: 'which pair', frequency: 'sense band' },
+      tier: 3
+    },
+    {
+      id: 'weaver', name: 'Weaver', glyph: '⋈', hue: 268,
+      blurb: 'Rides a filament. Σ is which strand; τ is how fast the web ages under you.',
+      medium: [MEDIUM.VACUUM],
+      mass: 0.4, thrust: 1.1, dragC: 0.4, liftC: 0, grip: 0,
+      senseRadius: 1.4, senseBands: 5, capacity: 160, draw: 0.7, regen: 1.1,
+      needs: env => env.label !== 'web' ? 'needs the cosmic web' : null,
+      dialMap: { time: 'web age', space: 'strand', phase: 'along filament', frequency: 'sense band' },
+      tier: 3,
+      web: true
     }
   ];
 
@@ -254,6 +278,20 @@
         roughness: c ? clamp01((c.viscosity - 2) / 8) : 0.4,
         hasMinds: true,
         label: c ? c.type.name : 'cytoplasm'
+      };
+    }
+    if (scene.kind === 'foam') {
+      return {
+        medium: MEDIUM.FOAM,
+        gravity: 0, pressure: 0, temperature: 0,
+        flux: 1, roughness: 0, hasMinds: false, label: 'foam'
+      };
+    }
+    if (scene.kind === 'web') {
+      return {
+        medium: MEDIUM.VACUUM,
+        gravity: 0, pressure: 0, temperature: 3,
+        flux: 1, roughness: 0, hasMinds: false, label: 'web'
       };
     }
     if (scene.kind === 'system') {

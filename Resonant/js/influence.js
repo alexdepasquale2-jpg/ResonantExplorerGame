@@ -113,6 +113,34 @@
       blurb: 'Pins a fourth-dimensional slice so it stops drifting. Locks hold without you.',
       effect: 'Coherence no longer decays in this system.',
       upkeep: 4.5
+    },
+    {
+      id: 'keel', name: 'Stellar Keel', glyph: '☆', hue: 48, scope: 'system',
+      cost: { insight: 1800 }, research: 'stellarcraft',
+      blurb: 'Biases the habitable-zone radius. It does not set a star\'s temperature.',
+      effect: 'Habitable zone nudged by luminosity *rate*, not by rewriting T.',
+      upkeep: 2.8
+    },
+    {
+      id: 'catalyst', name: 'Seam Catalyst', glyph: '⚗', hue: 28, scope: 'planet',
+      cost: { insight: 720 }, research: 'catalysis',
+      blurb: 'Biases local chemistry rates — the molecular scope\'s cousin on a world.',
+      effect: 'Resource abundance and chirality lean, slowly.',
+      upkeep: 1.2
+    },
+    {
+      id: 'chorus', name: 'Chorus', glyph: '◎', hue: 340, scope: 'planet',
+      cost: { insight: 2100 }, research: 'choruswork',
+      blurb: 'A culture is a process you lean on. Standing and awareness accrue faster.',
+      effect: 'Awareness rate ×1.8 as it matures.',
+      upkeep: 2.0
+    },
+    {
+      id: 'pin', name: 'Filament Pin', glyph: '⌖', hue: 276, scope: 'web',
+      cost: { insight: 2400 }, research: 'pinning',
+      blurb: 'Keeps an assembling filament interesting when you return. Does not freeze cosmic time.',
+      effect: 'Assembly payout leans while the pin matures.',
+      upkeep: 2.2
     }
   ];
   const STRUCT_BY_ID = Object.create(null);
@@ -159,7 +187,25 @@
       blurb: 'Raise what a culture can reach. They decide what to do with it.',
       unlocks: { structures: ['lattice'] } },
     { id: 'anchoring', name: 'Phase Anchoring', cost: 7400, needs: ['transfer', 'uplift'], hue: 320,
-      blurb: 'Pin a slice of the fourth dimension in place.', unlocks: { structures: ['anchor'] } }
+      blurb: 'Pin a slice of the fourth dimension in place.', unlocks: { structures: ['anchor'] } },
+    { id: 'fluctuation', name: 'Fluctuation', cost: 880, needs: ['microscopy'], hue: 291,
+      blurb: 'A body that is a pair, not a lump of matter. The only thing that can work the foam.',
+      unlocks: { vessels: ['flucton'] } },
+    { id: 'stellarcraft', name: 'Stellar Craft', cost: 2800, needs: ['transfer'], hue: 48,
+      blurb: 'Lean on a star\'s habitable zone without rewriting its temperature.',
+      unlocks: { structures: ['keel'] } },
+    { id: 'catalysis', name: 'Catalysis', cost: 1600, needs: ['extraction'], hue: 28,
+      blurb: 'Bias the chemistry of a world the way a cell already can.',
+      unlocks: { structures: ['catalyst'] } },
+    { id: 'choruswork', name: 'Chorus', cost: 3100, needs: ['empathy'], hue: 340,
+      blurb: 'Lean on a culture as a process, not as a button.',
+      unlocks: { structures: ['chorus'] } },
+    { id: 'pinning', name: 'Filament Pinning', cost: 4200, needs: ['fieldwork', 'transfer'], hue: 276,
+      blurb: 'Mark a filament so returning to it still means something.',
+      unlocks: { structures: ['pin'] } },
+    { id: 'weaving', name: 'Web Riding', cost: 3600, needs: ['fieldwork'], hue: 268,
+      blurb: 'A body that sits on a filament the way a walker sits on ground.',
+      unlocks: { vessels: ['weaver'] } }
   ];
   const RESEARCH_BY_ID = Object.create(null);
   RESEARCH.forEach((r, i) => { r.index = i; RESEARCH_BY_ID[r.id] = r; });
@@ -186,6 +232,27 @@
     return { ok: true };
   }
 
+  function systemDeltaKey(addr) {
+    if (!addr) return null;
+    return 'sys:' + addr.sx + ',' + addr.sy + ',' + addr.index;
+  }
+
+  function webDeltaKey(tierIndex) {
+    return 'web:' + (tierIndex | 0);
+  }
+
+  function targetKey(game, struct, planet) {
+    const scope = struct.scope || 'planet';
+    if (scope === 'system') {
+      return game.scene && game.scene.systemAddr ? systemDeltaKey(game.scene.systemAddr) : null;
+    }
+    if (scope === 'web') {
+      return webDeltaKey(Math.round(game.dials.space.value));
+    }
+    if (!planet) return null;
+    return planetKey(planet);
+  }
+
   /* ── Placement ────────────────────────────────────────────────────────────
    * A structure is four numbers: what, where, when it was placed, and how far
    * along it is. Nothing else is stored about the world it changed. */
@@ -194,7 +261,13 @@
     if (!s) return 'unknown structure';
     if (!game.structuresUnlocked[structId]) return 'not researched';
     if (game.insight < s.cost.insight) return 'needs ' + fmt(s.cost.insight) + ' Ψ';
-    const list = game.deltas[planetKey(planet)];
+    const scope = s.scope || 'planet';
+    if (scope === 'planet' && !planet) return 'needs a world';
+    if (scope === 'system' && !(game.scene && game.scene.systemAddr)) return 'needs a star';
+    if (scope === 'web' && !(game.scene && game.scene.kind === 'web')) return 'needs a filament';
+    const key = targetKey(game, s, planet);
+    if (!key) return 'nothing to site on';
+    const list = game.deltas[key];
     if (list && list.some(d => d.id === structId)) return 'already present';
     /* Upkeep is paid out of the passive rate; you cannot commit past your
      * income or the whole network browns out. */
@@ -207,14 +280,14 @@
     if (reason) return { ok: false, reason };
     const s = STRUCT_BY_ID[structId];
     game.insight -= s.cost.insight;
-    const key = planetKey(planet);
+    const key = targetKey(game, s, planet);
     const list = game.deltas[key] || (game.deltas[key] = []);
     list.push({
       id: structId, at: game.stats.playSeconds, progress: 0,
       lon: game.scene && game.scene.lon, lat: game.scene && game.scene.lat
     });
-    bus.emit('structure:place', { planet, struct: s });
-    return { ok: true };
+    bus.emit('structure:place', { planet: planet, struct: s, key: key });
+    return { ok: true, key: key };
   }
 
   /* ── Expression ───────────────────────────────────────────────────────────
@@ -371,12 +444,63 @@
         case 'anchor':
           planet.anchored = m;
           break;
+        case 'catalyst': {
+          if (planet.resources) {
+            for (const k in planet.resources) {
+              planet.resources[k] = clamp01(planet.resources[k] * (1 + 0.18 * m));
+            }
+          }
+          planet.chiralityBias = m;
+          planet.influenced = true;
+          break;
+        }
+        case 'chorus':
+          planet.chorus = m;
+          planet.influenced = true;
+          break;
       }
     }
     /* Habitability is downstream of surface temperature, so anything that
      * moved the climate has to re-derive it rather than leave a stale value. */
     if (planet.influenced) planet.habitability = RS.planet.habitabilityOf(planet);
     return planet;
+  }
+
+  function maturityOf(game, d) {
+    const elapsed = Math.max(0, game.stats.playSeconds - (d.at || 0));
+    const m = 1 - Math.exp(-elapsed / 1200);
+    d.progress = m;
+    return m;
+  }
+
+  /* System-keyed keel: bias the habitable *zone*, never the star's T. */
+  function applyToSystem(game, sys) {
+    if (!sys || !sys.addr) return sys;
+    if (sys.hz && !sys.__hz0) sys.__hz0 = { inner: sys.hz.inner, outer: sys.hz.outer };
+    const list = game.deltas[systemDeltaKey(sys.addr)];
+    if (!list) return sys;
+    let m = 0;
+    for (let i = 0; i < list.length; i++) {
+      const d = list[i];
+      if (d.id !== 'keel') continue;
+      m = Math.max(m, maturityOf(game, d));
+    }
+    if (m && sys.__hz0 && sys.hz) {
+      sys.hz.inner = sys.__hz0.inner * (1 - 0.04 * m);
+      sys.hz.outer = sys.__hz0.outer * (1 + 0.06 * m);
+    }
+    sys.keel = m;
+    return sys;
+  }
+
+  function pinOn(game, tierIndex) {
+    const list = game.deltas[webDeltaKey(tierIndex)];
+    if (!list) return 0;
+    let best = 0;
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].id === 'pin') best = Math.max(best, maturityOf(game, list[i]));
+    }
+    return best;
   }
 
   /* Passive income contributed by extractors, derived from the planet each one
@@ -461,10 +585,11 @@
 
   RS.influence = {
     STRUCTURES, STRUCT_BY_ID, RESEARCH, RESEARCH_BY_ID,
-    planetKey, parsePlanetKey, planetFromKey,
+    planetKey, parsePlanetKey, planetFromKey, systemDeltaKey, webDeltaKey,
     isResearched, researchAvailable, tryResearch,
     canPlace, place, structuresOn, totalUpkeep, structureCount,
     express, expressionOn, EXPRESSION_ID, EXPRESSION_CAP, EXPRESSION_SCALE,
-    applyTo, passiveFrom, extractorRate, recomputeFields, reachRadius
+    applyTo, applyToSystem, pinOn, maturityOf,
+    passiveFrom, extractorRate, recomputeFields, reachRadius
   };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));

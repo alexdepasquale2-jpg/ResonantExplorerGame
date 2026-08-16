@@ -620,6 +620,25 @@
       });
     });
 
+    bus.on('seed:open', ({ from, to }) => {
+      RS.audio.discover(1.6);
+      RS.feel.FX.discovery(186, 1.4);
+      RS.ui.toast({
+        kind: 'major', icon: '✦', hue: 186, ms: 6400,
+        title: 'ANOTHER SEED',
+        body: 'The essences did not care. The galaxy did. Understanding kept; places reset.'
+      });
+    });
+
+    bus.on('hunt:pin', ({ essence }) => {
+      RS.audio.seat(0.5);
+      RS.ui.toast({
+        kind: 'info', icon: essence.glyph, hue: 200, ms: 2800,
+        title: essence.name,
+        body: 'The objective will name this hunt. Insight cannot buy it.'
+      });
+    });
+
     bus.on('settings', ({ key, value }) => {
       if (key === 'audio') RS.audio.setEnabled(value);
       if (key === 'haptics') RS.feel.setHaptics(value);

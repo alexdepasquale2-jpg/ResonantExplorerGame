@@ -30,7 +30,7 @@
    * ── The four axes: the entire authored seed of the game ──────────────────
    *
    * Sixteen essences × four numbers = 64 values, and every mechanic in the
-   * game is generated from them (see emergence.js). 12 bands × 16 essences ×
+   * game is generated from them (see emergence.js). 12 bands × 20 essences ×
    * 8 geometries = 1536 distinct situations, all traceable back to this table
    * — which is what makes them *recognisable* rather than merely various.
    *
@@ -155,7 +155,39 @@
       branching: 0.20, symmetry: 0.60, persistence: 1.00,
       trait: 'The present shaped by something that has already stopped existing.',
       forms: { foam: 'Vacuum Imprint', orbital: 'Hysteresis', chain: 'Conformational State',
-        cell: 'Methylation Mark', body: 'Strata', disc: 'Stellar Stream', web: 'Relic Structure', abstract: 'State' } }
+        cell: 'Methylation Mark', body: 'Strata', disc: 'Stellar Stream', web: 'Relic Structure', abstract: 'State' } },
+    /* ── Four more holes in the axis space ───────────────────────────────
+     *
+     * Recursion is intricate but restless; Memory lasts but is not deep.
+     * Nothing was both a finished structure *and* unwilling to move.
+     * Cascade branches and is lopsided; nothing branched without picking a
+     * favourite direction. Duality is two descriptions that persist; nothing
+     * was perfectly even and gone in a blink. And nothing sat in the middle
+     * of all four axes, which is what a hinge is for. */
+    { id: 'sanctum', name: 'Sanctum', glyph: '⌂', hueShift: -28, complexity: 0.92,
+      branching: 0.18, symmetry: 0.74, persistence: 0.97,
+      trait: 'A structure so complete it no longer needs to change.',
+      forms: { foam: 'Stable Vacuum', orbital: 'Closed Shell', chain: 'Crystal Domain',
+        cell: 'Spore Wall', body: 'Keep', disc: 'Resonant Cavity', web: 'Bound Cluster',
+        abstract: 'Fixed Structure' } },
+    { id: 'thicket', name: 'Thicket', glyph: '※', hueShift: 88, complexity: 0.58,
+      branching: 0.96, symmetry: 0.06, persistence: 0.38,
+      trait: 'A gradient that will not pick a direction, so it takes all of them.',
+      forms: { foam: 'Branching Foam', orbital: 'Open Channels', chain: 'Random Copolymer',
+        cell: 'Cytoskeletal Tangle', body: 'Thicket', disc: 'Spur Field', web: 'Tangled Filament',
+        abstract: 'Fan' } },
+    { id: 'keystone', name: 'Keystone', glyph: '⌅', hueShift: 4, complexity: 0.50,
+      branching: 0.46, symmetry: 0.54, persistence: 0.52,
+      trait: 'The joint everything else turns on, and nothing on its own.',
+      forms: { foam: 'Coupling', orbital: 'Selection Rule', chain: 'Linking Residue',
+        cell: 'Checkpoint', body: 'Keystone', disc: 'Corotation', web: 'Node of Three',
+        abstract: 'Relation' } },
+    { id: 'parity', name: 'Parity', glyph: '⇄', hueShift: 118, complexity: 0.42,
+      branching: 0.12, symmetry: 0.98, persistence: 0.08,
+      trait: 'Two descriptions that agree for an instant and never again.',
+      forms: { foam: 'Pair Flash', orbital: 'Parity Doublet', chain: 'Tautomer',
+        cell: 'Metaphase', body: 'Glimmer', disc: 'Bar Flicker', web: 'Pair Spark',
+        abstract: 'Involution' } }
   ];
 
   const ESSENCE_BY_ID = Object.create(null);
@@ -387,9 +419,50 @@
     return n;
   }
 
+  /* How many REVEAL_AT thresholds this essence has crossed. Derived, never
+   * stored — Insight cannot buy it. 0..4. */
+  function attuneLevel(game, essenceId) {
+    return revealCount(gnosisOf(game, essenceId));
+  }
+
+  /* Empty (tier, band) contexts, named as places a player can actually go.
+   * The hunt is a destination, not a score. */
+  const HUNT_SCOPES = [
+    { lo: 0, hi: 1, label: 'the foam' },
+    { lo: 5, hi: 5, label: 'a cell' },
+    { lo: 4, hi: 4, label: 'a molecule' },
+    { lo: 14, hi: 17, label: 'a filament' },
+    { lo: 18, hi: 21, label: 'another universe' },
+    { lo: 6, hi: 8, label: 'a world' },
+    { lo: 13, hi: 13, label: 'the field' }
+  ];
+
+  function huntPlaces(game, essenceId) {
+    const have = Object.create(null);
+    const list = game.gnosis[essenceId] || [];
+    for (let i = 0; i < list.length; i++) have[list[i]] = true;
+    const nBand = RS.spectrum.BANDS.length;
+    const out = [];
+    const seen = Object.create(null);
+    for (let s = 0; s < HUNT_SCOPES.length; s++) {
+      const sc = HUNT_SCOPES[s];
+      if (seen[sc.label]) continue;
+      let miss = false;
+      for (let t = sc.lo; t <= sc.hi && !miss; t++) {
+        for (let b = 0; b < nBand; b++) {
+          if (!have[essenceId + '@' + t + ':' + b]) { miss = true; break; }
+        }
+      }
+      if (miss) { out.push(sc.label); seen[sc.label] = true; }
+      if (out.length >= 2) break;
+    }
+    return out;
+  }
+
   RS.fractal = {
     ESSENCES, ESSENCE_BY_ID, BAND_ADJ,
     essenceAt, resolve, contextKey, gnosisOf, recognise, gnosisBonus, totalGnosis,
-    AXES, REVEAL_AT, revealCount, revealOrder, predicted, knows, predictedEssence
+    AXES, REVEAL_AT, revealCount, revealOrder, predicted, knows, predictedEssence,
+    attuneLevel, huntPlaces
   };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));

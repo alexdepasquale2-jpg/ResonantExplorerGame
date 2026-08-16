@@ -15,7 +15,7 @@
   'use strict';
   const { clamp01 } = RS.core;
 
-  const SAVE_VERSION = 1;
+  const SAVE_VERSION = 2;
 
   function newGame(seed) {
     /* A new game starts in our own universe. The physics block is module-level
@@ -171,6 +171,8 @@
       return { text: 'Turn Σ inward to the star map. Tap a star, then turn Σ again.', kind: 'descend' };
     }
     const hunt = recognitionHunt(game);
+    const sits = RS.situations && RS.situations.live ? RS.situations.live(game) : [];
+    if (sits.length && sits[0].kind === 'hunt-here') return sits[0];
     /* A band inside the dial's reach but never crystallised is the strongest
      * pull the game has — it is visible, it is close, and it is not yours. */
     for (const b of RS.spectrum.BANDS) {
@@ -193,17 +195,54 @@
   }
 
   /* After an essence has been met twice, the objective may name it. Insight
-   * cannot buy this pathway; that is the point. */
+   * cannot buy this pathway; that is the point. A pinned hunt (codex tap)
+   * wins over the nearest-to-reveal, so the lattice is a map you can use. */
   function recognitionHunt(game) {
-    if (!RS.guide || !RS.guide.foresight) return null;
-    const fs = RS.guide.foresight(game);
-    if (!fs || !fs.nearest) return null;
-    const n = RS.fractal.gnosisOf(game, fs.nearest.id);
-    if (n < 2 || fs.gap <= 0) return null;
-    return {
-      text: fs.nearest.name + ' still has a blank axis. Find it in a cell, or in a filament.',
-      kind: 'recognition', essence: fs.nearest
-    };
+    let ess = null;
+    if (game.flags && game.flags.huntEssence) {
+      ess = RS.fractal.ESSENCE_BY_ID[game.flags.huntEssence];
+    }
+    if (!ess) {
+      if (!RS.guide || !RS.guide.foresight) return null;
+      const fs = RS.guide.foresight(game);
+      if (!fs || !fs.nearest) return null;
+      ess = fs.nearest;
+    }
+    const n = RS.fractal.gnosisOf(game, ess.id);
+    if (n < 2) return null;
+    const places = RS.fractal.huntPlaces(game, ess.id);
+    if (!places.length && RS.fractal.attuneLevel(game, ess.id) >= 4 &&
+        !(game.flags && game.flags.huntEssence === ess.id)) return null;
+    const where = places.length
+      ? 'Find it in ' + places.join(', or in ') + '.'
+      : 'Find it in a cell, or in a filament.';
+    const scene = game.scene && game.scene.kind;
+    const here = RS.situations && RS.situations.huntHere && RS.situations.huntHere(game);
+    if (here) return here;
+    if (scene === 'cellular' && places.indexOf('a cell') >= 0) {
+      return { text: ess.name + ' still has a blank here. Hold it in this cell.',
+        kind: 'recognition', essence: ess };
+    }
+    if (scene === 'web' && places.indexOf('a filament') >= 0) {
+      return { text: ess.name + ' still has a blank on this filament. Hold while it assembles.',
+        kind: 'recognition', essence: ess };
+    }
+    return { text: ess.name + ' still has a blank axis. ' + where,
+      kind: 'recognition', essence: ess };
+  }
+
+  function liveSituations(game) {
+    return (RS.situations && RS.situations.live) ? RS.situations.live(game) : [];
+  }
+
+  function pinHunt(game, essenceId) {
+    if (!game.flags) game.flags = Object.create(null);
+    if (!essenceId || !RS.fractal.ESSENCE_BY_ID[essenceId]) {
+      delete game.flags.huntEssence;
+      return { ok: false, reason: 'unknown' };
+    }
+    game.flags.huntEssence = essenceId;
+    return { ok: true, essence: RS.fractal.ESSENCE_BY_ID[essenceId] };
   }
 
   /* Persistent tap language. Same three meanings (strike / pulse / pick);
@@ -425,5 +464,73 @@
     game.__lastInsight = game.insight;
   }
 
-  RS.game = { SAVE_VERSION, newGame, tryUpgrade, nextObjective, sceneObjective, sceneVerb, recognitionHunt, progress, tickMeta };
+  /* Understanding survives the universe. Places do not. */
+  function canOpenSeed(game) {
+    if (!game) return false;
+    const ensemble = RS.scenes && RS.scenes.tierForScene
+      ? RS.cosmos.TIERS[RS.scenes.tierForScene('ensemble')] : null;
+    if (ensemble && game.known.tiers[ensemble.id]) return true;
+    for (const e of RS.fractal.ESSENCES) {
+      if (RS.fractal.attuneLevel(game, e.id) >= 4) return true;
+    }
+    return progress(game) >= 0.72;
+  }
+
+  function openSeed(game, bus) {
+    if (!canOpenSeed(game)) {
+      return { ok: false, reason: 'the essences are not finished with this universe' };
+    }
+    const keep = {
+      gnosis: game.gnosis,
+      research: game.research,
+      vessels: game.vessels.unlocked,
+      structuresUnlocked: game.structuresUnlocked,
+      senseBonus: game.senseBonus,
+      strikeLevels: game.strikeLevels,
+      settings: game.settings,
+      lifetimeInsight: game.lifetimeInsight,
+      levels: {},
+      seedsOpened: (game.stats.seedsOpened || 0) + 1,
+      carry: Math.min(40, game.insight * 0.08)
+    };
+    for (const id in game.dials) {
+      const d = game.dials[id];
+      keep.levels[id] = {
+        range: d.levels.range, precision: d.levels.precision, focus: d.levels.focus
+      };
+    }
+    const from = game.seed;
+    const next = (RS.core.hashN(game.seed, game.stats.playSeconds | 0, 0x5EED2) >>> 0) || 1;
+    const fresh = newGame(next);
+    const keys = Object.keys(fresh);
+    for (let i = 0; i < keys.length; i++) game[keys[i]] = fresh[keys[i]];
+    game.gnosis = keep.gnosis;
+    game.research = keep.research;
+    game.vessels.unlocked = keep.vessels;
+    game.vessels.unlocked.mote = true;
+    game.structuresUnlocked = keep.structuresUnlocked;
+    game.senseBonus = keep.senseBonus;
+    game.strikeLevels = keep.strikeLevels;
+    game.settings = keep.settings;
+    game.lifetimeInsight = keep.lifetimeInsight;
+    game.insight = keep.carry;
+    game.stats.seedsOpened = keep.seedsOpened;
+    for (const id in keep.levels) {
+      const d = game.dials[id];
+      if (!d) continue;
+      d.levels.range = keep.levels[id].range;
+      d.levels.precision = keep.levels[id].precision;
+      d.levels.focus = keep.levels[id].focus;
+    }
+    RS.dials.refreshReach(game.dials);
+    RS.influence.recomputeFields(game);
+    if (bus && bus.emit) bus.emit('seed:open', { from: from, to: game.seed });
+    return { ok: true, from: from, to: game.seed };
+  }
+
+  RS.game = {
+    SAVE_VERSION, newGame, tryUpgrade, nextObjective, sceneObjective, sceneVerb,
+    recognitionHunt, liveSituations, pinHunt, canOpenSeed, openSeed,
+    progress, tickMeta
+  };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));

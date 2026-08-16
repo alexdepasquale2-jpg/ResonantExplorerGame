@@ -246,7 +246,8 @@
     /* Assembly: at most double, and only while the growth rate is near its
      * peak. Sitting at the present day is the *worst* time to work a filament
      * that finished collapsing eight billion years ago. */
-    const asm = 1 + s.web.assembling * 1.0;
+    const asm = 1 + s.web.assembling * (1 + (RS.influence.pinOn
+      ? RS.influence.pinOn(game, Math.round(game.dials.space.value)) * 0.35 : 0));
     /* Disconnection: information from beyond the horizon cannot be checked
      * against anything local, which is either worthless or the most valuable
      * thing in the game depending on whether you believe the premise. The game

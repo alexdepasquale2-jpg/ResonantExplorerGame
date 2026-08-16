@@ -27,7 +27,7 @@
  * ── Contract ──────────────────────────────────────────────────────────────
  *
  * Every function here is pure, allocation-free (writes into a caller-owned
- * `out`), finite for all 16 essences × 22 tiers, and reads *all four* axes so
+ * `out`), finite for all 20 essences × 22 tiers, and reads *all four* axes so
  * no essence is inert in any primitive. They are called per node per frame, so
  * they must stay cheap — no trigonometry beyond one sin/cos, no allocation.
  */

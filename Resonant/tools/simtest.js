@@ -22,8 +22,8 @@ const ROOT = path.resolve(__dirname, '..');
 const FILES = [
   'js/core.js', 'js/cosmos.js', 'js/spectrum.js', 'js/dials.js', 'js/fractal.js', 'js/emergence.js', 'js/selfsimilar.js',
   'js/strike.js', 'js/field.js', 'js/physics.js', 'js/orbital.js', 'js/stellar.js', 'js/civ.js', 'js/planet.js',
-  'js/neural.js', 'js/vessel.js', 'js/inhabitants.js', 'js/localtime.js', 'js/influence.js', 'js/galaxy.js', 'js/contact.js',
-  'js/scene_cellular.js', 'js/scene_web.js', 'js/scene_foam.js', 'js/scene_ensemble.js', 'js/scene_molecular.js', 'js/scene_shells.js', 'js/scenes.js', 'js/game.js', 'js/guide.js', 'js/save.js', 'js/debug.js', 'js/audio.js', 'js/ui.js', 'js/bloom.js'
+  'js/neural.js', 'js/vessel.js', 'js/inhabitants.js', 'js/localtime.js', 'js/influence.js',   'js/galaxy.js', 'js/contact.js',
+  'js/scene_cellular.js', 'js/scene_web.js', 'js/scene_foam.js', 'js/scene_ensemble.js', 'js/scene_molecular.js', 'js/scene_shells.js', 'js/scenes.js', 'js/game.js', 'js/guide.js', 'js/situations.js', 'js/save.js', 'js/debug.js', 'js/audio.js', 'js/ui.js', 'js/bloom.js'
 ];
 
 const sandbox = {
@@ -4767,6 +4767,124 @@ const posOut = { x: 0, y: 0, z: 0, r: 0 };
   const pulseCam = RS.scenes.pulse(gCam, nullBus);
   assert(pulseCam.ok || pulseCam.reason === 'cooling', 'ground tap is still pulse');
   assert(gCam.scene.forceCam == null, 'pulse does not cycle the camera');
+}
+
+// ── generative loop: attunement, hunt, marks, foam body, new seed ────────
+{
+  const E = RS.fractal.ESSENCES;
+  assert(E.length === 20, 'the alphabet is twenty essences, not a second game');
+  for (const id of ['sanctum', 'thicket', 'keystone', 'parity']) {
+    const e = RS.fractal.ESSENCE_BY_ID[id];
+    assert(e, id + ' is in the ledger');
+    assert(e.complexity >= 0 && e.persistence >= 0, id + ' has axes');
+  }
+  const sanc = RS.fractal.ESSENCE_BY_ID.sanctum;
+  const thick = RS.fractal.ESSENCE_BY_ID.thicket;
+  assert(sanc.complexity > 0.85 && sanc.persistence > 0.9, 'Sanctum is deep and lasting');
+  assert(thick.branching > 0.9 && thick.symmetry < 0.15, 'Thicket branches without a favourite');
+
+  const g = RS.game.newGame(42);
+  assert(RS.fractal.attuneLevel(g, 'cascade') === 0, 'attunement starts at zero');
+  const meanB = RS.fractal.predictedEssence(g, 'cascade', {}).branching;
+  const p0 = RS.game.newGame(42);
+  const ghost0 = RS.fractal.predictedEssence(p0, 'cascade', {});
+  assert(Math.abs(ghost0.branching - meanB) < 1e-9, 'unread axes ghost the mean, not the truth');
+  g.gnosis.cascade = ['cascade@13:0', 'cascade@8:0'];
+  assert(RS.fractal.attuneLevel(g, 'cascade') === 1, 'two contexts is attunement 1');
+  g.gnosis.cascade = ['cascade@13:0', 'cascade@8:0', 'cascade@5:0', 'cascade@4:0'];
+  assert(RS.fractal.attuneLevel(g, 'cascade') === 2, 'four contexts is attunement 2');
+  g.gnosis.cascade.push('cascade@0:0', 'cascade@16:0');
+  assert(RS.fractal.attuneLevel(g, 'cascade') === 3, 'six contexts is attunement 3');
+  g.gnosis.cascade.push('cascade@18:0', 'cascade@6:0');
+  assert(RS.fractal.attuneLevel(g, 'cascade') === 4, 'eight contexts is full foresight');
+  const full = RS.fractal.predictedEssence(g, 'cascade', {});
+  const real = RS.fractal.ESSENCE_BY_ID.cascade;
+  assert(Math.abs(full.branching - real.branching) < 1e-9, 'full attunement predicts the real branching');
+
+  const places = RS.fractal.huntPlaces(g, 'cascade');
+  assert(Array.isArray(places), 'hunt places are a list of scopes');
+  const hunt = RS.game.recognitionHunt(g);
+  assert(hunt && /Cascade/i.test(hunt.text), 'the hunt still names Cascade (' + (hunt && hunt.text) + ')');
+  assert(/cell|filament|foam|molecule|world|field|universe/i.test(hunt.text),
+    'and names a place, not a shop (' + hunt.text + ')');
+
+  const pin = RS.game.pinHunt(g, 'cascade');
+  assert(pin.ok && g.flags.huntEssence === 'cascade', 'the codex can pin a hunt');
+  const sits = RS.game.liveSituations(g);
+  assert(Array.isArray(sits) && sits.length <= 3, 'situations are a short derived list');
+
+  const beforeLv = RS.fractal.attuneLevel(g, 'thicket');
+  g.insight = 1e12;
+  for (const node of RS.influence.RESEARCH) RS.influence.tryResearch(g, nullBus, node.id);
+  assert(RS.fractal.attuneLevel(g, 'thicket') === beforeLv, 'insight does not raise attunement');
+
+  const gF = RS.game.newGame(313);
+  RS.dials.setValue(gF, gF.dials.space, 0);
+  for (let i = 0; i < 20; i++) RS.scenes.tick(gF, nullBus, 1 / 60);
+  assert(gF.scene.kind === 'foam', 'tests stand in the foam');
+  const walk = RS.scenes.embark(gF, nullBus, 'walker');
+  assert(!walk.ok && /persist/.test(walk.reason), 'walkers still cannot enter the foam');
+  gF.vessels.unlocked.flucton = true;
+  const fl = RS.scenes.embark(gF, nullBus, 'flucton');
+  assert(fl.ok && gF.inhabiting, 'the flucton can work the foam');
+  assert(RS.vessel.environmentFor(gF).medium === RS.vessel.MEDIUM.FOAM, 'foam is its own medium');
+  for (let i = 0; i < 6; i++) RS.scenes.tick(gF, nullBus, 1 / 60);
+  assert(gF.inhabiting, 'the flucton survives the foam tick');
+  RS.scenes.disembark(gF, nullBus);
+  gF.body = RS.vessel.newBody('walker');
+  gF.inhabiting = true;
+  for (let i = 0; i < 6; i++) RS.scenes.tick(gF, nullBus, 1 / 60);
+  assert(!gF.inhabiting, 'a walker that arrives in the foam is still ejected');
+
+  function systemGame(seed) {
+    const gg = RS.game.newGame(seed);
+    outer:
+    for (let sx = 0; sx < 12; sx++) {
+      for (let sy = 0; sy < 4; sy++) {
+        for (let ix = 0; ix < 3; ix++) {
+          const sys = RS.stellar.systemAt(gg.seed, sx, sy, ix);
+          if (!sys || !sys.bodies.some(b => b.kind === 'planet')) continue;
+          gg.scene.systemAddr = { sx, sy, index: ix };
+          gg.scene.system = sys;
+          gg.scene.kind = 'system';
+          break outer;
+        }
+      }
+    }
+    return gg;
+  }
+  const gK = systemGame(909);
+  assert(gK.scene.system, 'keel tests have a system');
+  const t0 = gK.scene.system.primary.temperature;
+  const hz0 = gK.scene.system.hz.inner;
+  gK.structuresUnlocked.keel = true;
+  gK.insight = 1e9;
+  gK.passiveRate = 20;
+  const placed = RS.influence.place(gK, nullBus, gK.scene.planet, 'keel');
+  assert(placed.ok, 'a keel sites on a system (' + (placed.reason || 'ok') + ')');
+  gK.stats.playSeconds += 2000;
+  RS.influence.applyToSystem(gK, gK.scene.system);
+  assert(gK.scene.system.primary.temperature === t0, 'a keel never rewrites stellar T');
+  assert(gK.scene.system.hz.inner !== hz0 || gK.scene.system.keel > 0, 'the habitable zone is the thing that leans');
+
+  const gS = RS.game.newGame(7);
+  gS.gnosis.cascade = g.gnosis.cascade.slice();
+  gS.research.locomotion = true;
+  gS.vessels.unlocked.walker = true;
+  gS.insight = 500;
+  gS.deltas['0,0,0,0'] = [{ id: 'extractor', at: 0 }];
+  gS.known.planets['x'] = true;
+  assert(RS.game.canOpenSeed(gS), 'full attunement on one essence opens a new seed');
+  const rS = RS.game.openSeed(gS, nullBus);
+  assert(rS.ok && rS.to !== rS.from, 'the seed actually changes');
+  assert(RS.fractal.attuneLevel(gS, 'cascade') === 4, 'gnosis survives the universe');
+  assert(gS.research.locomotion && gS.vessels.unlocked.walker, 'research and bodies survive');
+  assert(!gS.deltas['0,0,0,0'], 'world marks do not');
+  assert(!gS.known.planets['x'], 'nor visited places');
+  assert(gS.insight < 500, 'insight is not a prestige loot pile');
+
+  const html = RS.ui.codexHTML(gS);
+  assert(/elat/.test(html), 'the codex draws a lattice of scopes');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
