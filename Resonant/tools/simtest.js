@@ -1246,6 +1246,9 @@ function busCollecting(store) {
   RS.vessel.addCargo(g.body, 'metals', 12);
   g.inhabiting = true;
 
+  g.surveys = Object.create(null);
+  g.surveys['1,1,0,2'] = { work: 4, lastAt: 12.5 };
+
   assert(RS.save.writeNow(g), 'the expanded save writes');
   const raw = RS.save.readRaw();
   const h = RS.save.hydrate(raw);
@@ -1260,6 +1263,8 @@ function busCollecting(store) {
   assert(h.body.archId === 'walker' && Math.abs(h.body.charge - 55) < 1e-6, 'the body round-trips');
   assert(h.body.hold.metals === 12, 'cargo round-trips');
   assert(h.inhabiting, 'inhabiting state round-trips');
+  assert(h.surveys['1,1,0,2'] && h.surveys['1,1,0,2'].work === 4, 'survey work round-trips');
+  near(h.surveys['1,1,0,2'].lastAt, 12.5, 1e-9, 'survey lastAt round-trips');
 
   /* The size claim: a save carrying real exploration must stay small. */
   for (let i = 0; i < 400; i++) h.known.planets['s' + i + ',0,0,1'] = true;
@@ -4473,6 +4478,134 @@ const posOut = { x: 0, y: 0, z: 0, r: 0 };
   g.body.ridingCiv = true;
   const rows = RS.guide.dialRows(g);
   assert(/culture/i.test(rows[0].note), 'dial copy names the culture while riding it');
+}
+
+// ── extractors pay idle insight; worlds have a pulse clicker ─────────────
+{
+  /* Extractors used to mark the planet and never credit the idle floor.
+   * Pulse is strike's cousin on a planet: two numbers per world, not a map. */
+  function firstPlanetGame(seed) {
+    const g = RS.game.newGame(seed);
+    outer:
+    for (let sx = 0; sx < 24; sx++) {
+      for (let sy = 0; sy < 6; sy++) {
+        for (let ix = 0; ix < 3; ix++) {
+          const sys = RS.stellar.systemAt(g.seed, sx, sy, ix);
+          for (let j = 0; j < sys.bodies.length; j++) {
+            if (sys.bodies[j].kind !== 'planet') continue;
+            g.scene.systemAddr = { sx, sy, index: ix };
+            g.scene.system = sys;
+            const p = RS.scenes.selectBody(g, nullBus, j);
+            if (!p) continue;
+            g.scene.kind = 'planet';
+            break outer;
+          }
+        }
+      }
+    }
+    return g;
+  }
+
+  const g = firstPlanetGame(808);
+  assert(g.scene.planet, 'earn tests have a world');
+  const rich = RS.scenes.richnessAt(g.scene.planet, g.scene.lon, g.scene.lat);
+  assert(Number.isFinite(rich) && rich >= 0, 'richnessAt is finite on a landable world');
+
+  const html = RS.ui.worldHTML(g);
+  assert(/data-act="pulse"/.test(html), 'the world panel offers a pulse');
+
+  g.structuresUnlocked.extractor = true;
+  g.insight = 1e9;
+  g.passiveRate = 1;
+  const placed = RS.influence.place(g, nullBus, g.scene.planet, 'extractor');
+  assert(placed.ok, 'an extractor sites (' + (placed.reason || 'ok') + ')');
+  /* Maturity is elapsed play time since `at`. Place first, then wait. */
+  g.stats.playSeconds = 1800;
+  RS.scenes.derivePlanet(g, g.scene.system, g.scene.bodyIndex);
+  const rate = RS.influence.extractorRate(g);
+  assert(rate > 0, 'a matured extractor contributes idle rate (' + rate + ')');
+
+  const twin = firstPlanetGame(808);
+  RS.field.updateDerived(g);
+  RS.field.updateDerived(twin);
+  assert(g.passiveRate > twin.passiveRate + 1e-9,
+    'updateDerived adds extractor income to the idle floor (' +
+    g.passiveRate + ' vs ' + twin.passiveRate + ')');
+
+  /* Pulse pays, cools, diminishes on the same world, resets on a new key. */
+  const gP = firstPlanetGame(909);
+  gP.stats.playSeconds = 10;
+  const before = gP.insight;
+  const p1 = RS.scenes.pulse(gP, nullBus);
+  assert(p1.ok && p1.amount > 0, 'a pulse pays insight');
+  assert(gP.insight > before, 'and credits the wallet');
+  assert(p1.first, 'the first read of a world is flagged');
+  const cool = RS.scenes.pulse(gP, nullBus);
+  assert(!cool.ok && cool.reason === 'cooling', 'a pulse inside the cooldown is refused');
+  gP.stats.playSeconds += RS.scenes.PULSE_COOLDOWN + 0.05;
+  const p2 = RS.scenes.pulse(gP, nullBus);
+  assert(p2.ok, 'a pulse after the cooldown pays again');
+  assert(p2.amount < p1.amount, 'the same world diminishes (' + p2.amount + ' < ' + p1.amount + ')');
+  assert(!p2.first, 'the second read is not a first-world bounty');
+
+  const keyA = RS.influence.planetKey(gP.scene.planet);
+  /* A different body in the same or another system is a new survey key. */
+  let other = null;
+  outer2:
+  for (let sx = 0; sx < 24; sx++) {
+    for (let sy = 0; sy < 6; sy++) {
+      for (let ix = 0; ix < 3; ix++) {
+        const sys = RS.stellar.systemAt(gP.seed, sx, sy, ix);
+        for (let j = 0; j < sys.bodies.length; j++) {
+          if (sys.bodies[j].kind !== 'planet') continue;
+          gP.scene.systemAddr = { sx, sy, index: ix };
+          gP.scene.system = sys;
+          const p = RS.scenes.selectBody(gP, nullBus, j);
+          if (!p) continue;
+          if (RS.influence.planetKey(p) === keyA) continue;
+          other = p;
+          gP.scene.kind = 'planet';
+          break outer2;
+        }
+      }
+    }
+  }
+  assert(other, 'pulse-diminish tests have a second world');
+  gP.stats.playSeconds += RS.scenes.PULSE_COOLDOWN + 0.05;
+  const p3 = RS.scenes.pulse(gP, nullBus);
+  assert(p3.ok && p3.first, 'a new planet key is a full bounty again');
+  assert(p3.amount > p2.amount, 'and pays more than the diminished patch');
+
+  RS.save.writeNow(gP);
+  const hP = RS.save.hydrate(RS.save.readRaw());
+  const rec = hP.surveys[keyA];
+  assert(rec && rec.work === 2, 'surveys round-trip with the pulse work count');
+
+  /* Harvester: the same tap extracts when charge and hold allow. */
+  const gH = firstPlanetGame(1010);
+  gH.inhabiting = true;
+  gH.body = RS.vessel.newBody('harvester');
+  gH.vessels.unlocked.harvester = true;
+  gH.body.charge = 80;
+  gH.stats.playSeconds = 4;
+  const holdBefore = gH.body.holdMass;
+  const events = {};
+  const pH = RS.scenes.pulse(gH, busCollecting(events));
+  assert(pH.ok, 'a harvester pulse still surveys');
+  assert(pH.extracted && pH.extracted.ok, 'and extracts on the same tap');
+  assert(gH.body.holdMass > holdBefore, 'the hold actually grew');
+  assert(gH.body.charge < 80, 'extraction spent charge');
+  assert(events['place:pulse'] && events['place:pulse'].length === 1, 'pulse emits once');
+
+  /* Objective "seams" path: resources is an object, not an array. */
+  const gO = firstPlanetGame(1111);
+  gO.inhabiting = true;
+  gO.body = RS.vessel.newBody('mote');
+  gO.vessels.unlocked.mote = true;
+  if (gO.scene.planet.biosphere) gO.scene.planet.biosphere.complexity = 0.1;
+  const obj = RS.game.sceneObjective(gO);
+  assert(/Seams|survey|Tap the ground/i.test(obj.text),
+    'the planet objective can mention seams or surveying (' + obj.text + ')');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

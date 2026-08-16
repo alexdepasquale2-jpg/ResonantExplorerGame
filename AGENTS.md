@@ -14,10 +14,9 @@ authoritative developer guide.
 
 Standard commands (run from `Resonant/`):
 
-- Test: `node tools/simtest.js` — headless assertion suite (1750 assertions,
-  runs against the real modules under a `window` shim; takes ~25s). It must be
-  green before committing. There is no separate lint step; this suite is the
-  gate.
+- Test: `node tools/simtest.js` — headless assertion suite (must be green
+  before committing; count is in `HANDOFF.md`). There is no separate lint
+  step; this suite is the gate.
 - Build: `node tools/build.mjs` — inlines everything into
   `dist/resonant.html`, one self-contained file. Not required to run the app.
 - Run (dev): `python3 -m http.server 8000` then open
@@ -36,10 +35,12 @@ Developer cheat HUD (debug only):
 
 Planet cameras (while inhabiting): near-ground is the side-on slice; altitude
 above ~0.22 is the 48×32 freeroam neighbourhood; observing is still the globe.
-Cycle with the scene tag, `C`, or a tap on empty ground (AUTO → SIDE-ON → MAP).
-The debug HUD can still force a mode, including globe. Sample counts are fixed
-— do not grow them with zoom. No heightmaps: `effective = derived(address) ⊕
-deltas`.
+Cycle with the scene tag or `C` — a tap on the ground surveys the patch
+(world pulse) and does not change camera. The debug HUD can still force a
+mode, including globe. Sample counts are fixed — do not grow them with zoom.
+No heightmaps: `effective = derived(address) ⊕ deltas`. Extractors add to
+`passiveRate` via `RS.influence.extractorRate`; surveys are two numbers per
+planet key in `game.surveys`.
 
 Non-obvious notes for developing/testing in the browser:
 

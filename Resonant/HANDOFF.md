@@ -89,7 +89,8 @@ a second world:
   tide waterline, parallax far band).
 - **Altitude above ~0.22, or a camera toggle** → 48×32 freeroam
   neighbourhood. Zoom opens the span; sample count does not. Toggle with
-  the scene tag, `C`, or a tap on empty ground while inhabiting.
+  the scene tag or `C`. A tap on the ground is a world pulse (survey), not
+  a camera cycle.
 
 Pose is `(scene.lon, scene.lat, scene.altitude)`. Agents live in lon/lat.
 Saves still persist only those numbers. Debug HUD can teleport and dump the
@@ -247,21 +248,21 @@ rather than a number.
 
 ## 7. What to do next, in order of value
 
-The vessel open-world pass and its follow-up have landed: planetary geology,
-lon/lat freeroam plus rich side-on, place-aware vessel glyphs, galaxy vacuum
-drift as a real `sx/sy` address change, a player-facing camera cycle, downhill
-fall-line slides, a wider rumour census, cheaper bloom in the attunement field,
-and guide copy for riding a culture from orbit.
+The vessel open-world pass, its follow-up, and the world-visuals / earn pass
+have landed: planetary geology, lon/lat freeroam plus rich side-on (vegetation,
+clouds, slope-lit neighbourhood, globe specular and city lights), place-aware
+vessel glyphs, galaxy vacuum drift as a real `sx/sy` address change with a
+short toast, a player-facing camera cycle (`C` / scene tag), downhill fall-line
+slides, a wider rumour census, cheaper bloom in the attunement field, guide
+copy for riding a culture from orbit, **extractors that actually pay idle Ψ**,
+and a **world pulse** clicker (`game.surveys[planetKey] = { work, lastAt }`).
 
 What is still worth doing:
 
-1. **Feel of a sector crossing.** The address change is real; the map
-   recentres in one frame. A short ease or a toast naming the snapped star
-   would make the courier's hop read as travel rather than a cut.
-2. **Foam remains embark-blocked.** That is the live rule (`Σ` is vertical
+1. **Foam remains embark-blocked.** That is the live rule (`Σ` is vertical
    while embodied). If a later pass wants a foam-native body, it has to be
    a new medium, not a weakening of `embark`.
-3. **Sample budgets stay fixed.** Do not grow the profile, neighbourhood, or
+2. **Sample budgets stay fixed.** Do not grow the profile, neighbourhood, or
    globe grids with zoom. If a scope feels empty, derive a different question
    of the same samples.
 
