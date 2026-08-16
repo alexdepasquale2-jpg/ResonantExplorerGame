@@ -234,6 +234,14 @@
      * Useful for testing as well as for accessibility. */
     let kbIndex = 3;
     window.addEventListener('keydown', e => {
+      /* Backtick toggles the gated developer cheat HUD. Do not steal f/Tab/arrows. */
+      if (e.key === '`' || e.code === 'Backquote') {
+        if (RS.debug && RS.debug.enabled() && RS.ui && RS.ui.toggleDebug) {
+          e.preventDefault();
+          RS.ui.toggleDebug(game, bus);
+        }
+        return;
+      }
       const ids = ['time', 'space', 'phase', 'frequency'];
       if (e.key === 'Tab') { kbIndex = (kbIndex + 1) % 4; e.preventDefault(); bus.emit('dial:jump', { dial: game.dials[ids[kbIndex]] }); return; }
       const dial = game.dials[ids[kbIndex]];
