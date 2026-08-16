@@ -17,6 +17,8 @@
   const el = Object.create(null);
   const lastText = Object.create(null);
   let drawerOpen = null;
+  let debugOpen = false;
+  let debugAcc = 0;
 
   function $(id) { return document.getElementById(id); }
 
@@ -27,6 +29,34 @@
       'btn-drawer-close', 'beat-hint', 'btn-menu',
       'scene-tag', 'body-bar', 'btn-contact', 'contact-hint']) {
       el[id] = $(id);
+    }
+
+    /* Debug HUD is opt-in (localhost / ?debug=1 / localStorage). Mount once;
+     * stay hidden until toggled. Never a player-facing topbar control. */
+    if (RS.debug && RS.debug.enabled()) {
+      let hud = $('debug-hud');
+      if (!hud) {
+        hud = document.createElement('div');
+        hud.id = 'debug-hud';
+        hud.className = 'hidden';
+        document.body.appendChild(hud);
+      }
+      el['debug-hud'] = hud;
+      hud.addEventListener('click', ev => {
+        const btn = ev.target.closest('[data-dbg]');
+        if (!btn) return;
+        const action = btn.dataset.dbg;
+        if (action === 'close') { setDebugOpen(false); return; }
+        const arg = btn.dataset.dbgArg;
+        const r = RS.debug.run(game, bus, action, arg);
+        if (r && r.json && typeof navigator !== 'undefined' && navigator.clipboard) {
+          navigator.clipboard.writeText(r.json).catch(() => {});
+          toast({ kind: 'info', title: 'Save JSON copied', body: r.json.length + ' chars' });
+        } else if (r && !r.ok) {
+          bus.emit('ui:deny', { reason: 'blocked', message: r.reason || 'debug failed' });
+        }
+        renderDebug(game);
+      });
     }
 
     /* One button, one drawer, tabs inside it. There were seven topbar buttons
@@ -165,10 +195,36 @@
 
   // --- per-frame -----------------------------------------------------------
 
+  function setDebugOpen(on) {
+    debugOpen = !!on;
+    const hud = el['debug-hud'];
+    if (!hud) return;
+    hud.classList.toggle('hidden', !debugOpen);
+  }
+
+  function toggleDebug(game, bus) {
+    if (!RS.debug || !RS.debug.enabled() || !el['debug-hud']) return false;
+    setDebugOpen(!debugOpen);
+    if (debugOpen) renderDebug(game);
+    return true;
+  }
+
+  function renderDebug(game) {
+    const hud = el['debug-hud'];
+    if (!hud || !debugOpen || !RS.debug) return;
+    hud.innerHTML = RS.debug.panelHTML(game);
+  }
+
   function render(game) {
     setText('insight-val', fmt(game.insight), 'pop');
     setText('rate-val', '+' + fmt(game.passiveRate) + '/s');
     setText('gnosis-val', String(RS.fractal.totalGnosis(game)));
+
+    /* Refresh the debug status strip cheaply; full rebuild only when open. */
+    if (debugOpen) {
+      debugAcc++;
+      if (debugAcc % 15 === 0) renderDebug(game);
+    }
 
     const p = RS.game.progress(game);
     el['progress-fill'].style.width = (p * 100).toFixed(2) + '%';
@@ -1357,5 +1413,9 @@
 
   RS.ui = {
     setNotifyLevel, init, render, toast, toggleDrawer, openDrawer, closeDrawer, renderDrawer, renderTabs, setText, TABS,
-    worldHTML, vesselsHTML, contactHTML, codexHTML, upgradesHTML, settingsHTML, get drawerOpen() { return drawerOpen; } };
+    worldHTML, vesselsHTML, contactHTML, codexHTML, upgradesHTML, settingsHTML,
+    toggleDebug, renderDebug, setDebugOpen,
+    get drawerOpen() { return drawerOpen; },
+    get debugOpen() { return debugOpen; }
+  };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));

@@ -23,7 +23,7 @@ const FILES = [
   'js/core.js', 'js/cosmos.js', 'js/spectrum.js', 'js/dials.js', 'js/fractal.js', 'js/emergence.js', 'js/selfsimilar.js',
   'js/strike.js', 'js/field.js', 'js/physics.js', 'js/orbital.js', 'js/stellar.js', 'js/civ.js', 'js/planet.js',
   'js/neural.js', 'js/vessel.js', 'js/inhabitants.js', 'js/localtime.js', 'js/influence.js', 'js/galaxy.js', 'js/contact.js',
-  'js/scene_cellular.js', 'js/scene_web.js', 'js/scene_foam.js', 'js/scene_ensemble.js', 'js/scene_molecular.js', 'js/scene_shells.js', 'js/scenes.js', 'js/game.js', 'js/guide.js', 'js/save.js', 'js/audio.js', 'js/ui.js', 'js/bloom.js'
+  'js/scene_cellular.js', 'js/scene_web.js', 'js/scene_foam.js', 'js/scene_ensemble.js', 'js/scene_molecular.js', 'js/scene_shells.js', 'js/scenes.js', 'js/game.js', 'js/guide.js', 'js/save.js', 'js/debug.js', 'js/audio.js', 'js/ui.js', 'js/bloom.js'
 ];
 
 const sandbox = {
@@ -4029,6 +4029,65 @@ const posOut = { x: 0, y: 0, z: 0, r: 0 };
     'strike upgrades round-trip through a save');
   assert(round.strike.best === 44, 'and so does the best combo');
   assert(round.strike.combo === 0, 'but the live combo does not');
+}
+
+// ── developer cheat / debug HUD ──────────────────────────────────────────
+{
+  assert(!!RS.debug, 'debug module is loaded');
+  assert(typeof RS.debug.enabled === 'function', 'debug.enabled exists');
+  assert(typeof RS.debug.run === 'function', 'debug.run exists');
+  assert(typeof RS.debug.panelHTML === 'function', 'debug.panelHTML exists');
+
+  /* Gated off by default in the headless shim (no localhost location). */
+  sandbox.localStorage.removeItem('resonantDebug');
+  assert(RS.debug.enabled() === false, 'debug is gated off without localStorage/localhost');
+  sandbox.localStorage.setItem('resonantDebug', '1');
+  assert(RS.debug.enabled() === true, 'localStorage.resonantDebug=1 enables debug');
+  sandbox.localStorage.removeItem('resonantDebug');
+
+  const g = RS.game.newGame(4242);
+  const before = g.insight;
+  RS.debug.grantInsight(g, 1000);
+  assert(g.insight === before + 1000, 'grantInsight adds Ψ');
+  assert(g.lifetimeInsight >= 1000, 'grantInsight bumps lifetimeInsight');
+
+  RS.debug.unlockAll(g, nullBus);
+  assert(RS.influence.RESEARCH.every(n => g.research[n.id]), 'unlockAll researches every node');
+  assert(RS.vessel.ARCHETYPES.every(a => g.vessels.unlocked[a.id]), 'unlockAll unlocks every vessel');
+  assert(RS.influence.STRUCTURES.every(s => g.structuresUnlocked[s.id]), 'unlockAll unlocks every structure');
+  assert(RS.spectrum.BANDS.every(b => g.known.bands[b.id]), 'unlockAll knows every band');
+  assert(RS.cosmos.TIERS.every(t => g.known.tiers[t.id]), 'unlockAll knows every tier');
+  assert(RS.dials.DEFS.every(d => {
+    const dial = g.dials[d.id];
+    return !RS.dials.canUpgrade(dial, 'precision') && !RS.dials.canUpgrade(dial, 'focus');
+  }), 'unlockAll maxes dial precision and focus');
+  assert(RS.strike.UPGRADES.every(u => RS.strike.levelOf(g, u.id) === u.max),
+    'unlockAll maxes strike upgrades');
+
+  const jumped = RS.debug.jumpScene(g, nullBus, 'foam');
+  assert(jumped.ok && g.scene.kind === 'foam', 'jumpScene lands on foam');
+  assert(RS.debug.jumpScene(g, nullBus, 'ensemble').ok && g.scene.kind === 'ensemble',
+    'jumpScene lands on ensemble');
+  assert(RS.debug.jumpScene(g, nullBus, 'galaxy').ok && g.scene.kind === 'galaxy',
+    'jumpScene lands on galaxy');
+
+  const snap = RS.debug.snapPhi(g, 'thermal');
+  assert(snap.ok && Math.abs(g.dials.frequency.value - RS.spectrum.BY_ID.thermal.centre) < 1e-9,
+    'snapPhi lands on band centre');
+
+  const html = RS.debug.panelHTML(g);
+  assert(html.indexOf('data-dbg="unlock-all"') >= 0, 'panelHTML includes unlock-all');
+  assert(html.indexOf('data-dbg="jump"') >= 0, 'panelHTML includes scene jumps');
+  assert(html.indexOf('DEV') >= 0, 'panelHTML marks itself as DEV');
+
+  /* Unlocks must survive a save round-trip (same path the game uses). */
+  const round = RS.save.hydrate(JSON.parse(JSON.stringify(RS.save.serialise(g))));
+  assert(RS.influence.RESEARCH.every(n => round.research[n.id]),
+    'debug unlocks round-trip through save (research)');
+  assert(RS.spectrum.BANDS.every(b => round.known.bands[b.id]),
+    'debug unlocks round-trip through save (bands)');
+  assert(RS.strike.UPGRADES.every(u => RS.strike.levelOf(round, u.id) === u.max),
+    'debug unlocks round-trip through save (strike)');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
