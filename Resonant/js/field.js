@@ -104,11 +104,12 @@
    *
    * φ and Σ are always fully demanded — they are which layer and which rung,
    * and nothing is legible without them. The consequence is a curve that is
-   * *shaped* rather than sloped: Baryonic and Thermal ask for nothing beyond
-   * the two dials you start with, Electromagnetic makes τ matter the instant
-   * you arrive, Probabilistic does the same for Δ, and Unity asks for all four
-   * at once. Each layer introduces the dial its own mechanics need, which is a
-   * better tutorial than a ramp because the reason is visible.
+   * *shaped* rather than sloped: Baryonic asks for nothing beyond the two
+   * dials you start with, Thermal adds GATE windows on a leaking flow,
+   * Electromagnetic makes τ the whole job, Probabilistic does the same for Δ,
+   * and Unity asks for all four at once. Each layer introduces the dial its
+   * own mechanics need, which is a better tutorial than a ramp because the
+   * reason is visible.
    */
   const DIAL_LOAD = {
     gate:   { phase: 0.15, rate: 0.90 },
@@ -526,7 +527,7 @@
      * watching — but only where the layer is calm enough for anything to
      * settle, and split between however many primitives are competing for it.
      * Baryonic (one slow flow) is therefore the idle layer; Thermal, which
-     * runs the same primitive at four times the drift, pays nothing at all. */
+     * also gates, pays nothing at all. */
     game.insight += game.passiveRate * dt * passiveShareOf(RS.spectrum.BANDS[bandIndex]);
 
     if (RS.strike) RS.strike.tick(game, bus, dt);
@@ -812,9 +813,37 @@
     return { seconds: capped, gained };
   }
 
+  /* Which named option is live on the focused node. Derived from primitive
+   * state, not a menu. */
+  function liveOption(game, node) {
+    const n = node || game.focusNode;
+    const band = RS.spectrum.BANDS[game.field ? game.field.bandIndex : 0];
+    if (!n || !n.man) {
+      const opts = RS.spectrum.optionsOf(band);
+      return opts[0] || { id: 'hold', label: 'HOLD' };
+    }
+    if (RS.spectrum.usesPrim(band, 'gate') && n.gate < 0.42) {
+      return { id: 'window', label: 'WAIT' };
+    }
+    if (RS.spectrum.usesPrim(band, 'gate') && n.gate >= 0.55 && n.align > 0.62) {
+      return { id: 'strike', label: 'STRIKE' };
+    }
+    if (n.twinInfo && !n.collapsed) return { id: 'collapse', label: 'COLLAPSE' };
+    if (n.blocked) return { id: 'chain', label: 'CHAIN' };
+    if (n.depth > 0) return { id: 'dive', label: 'DIVE' };
+    if (RS.spectrum.usesPrim(band, 'invert')) return { id: 'mismatch', label: 'MISMATCH' };
+    if (RS.spectrum.usesPrim(band, 'flow') && band.drift >= 1) return { id: 'track', label: 'TRACK' };
+    if (RS.spectrum.usesPrim(band, 'flow') && band.drift < 1 && n.align < 0.35) {
+      return { id: 'soak', label: 'SOAK' };
+    }
+    if (band.id === 'unity' && n.align < 0.55) return { id: 'surrender', label: 'SURRENDER' };
+    return { id: 'hold', label: 'HOLD' };
+  }
+
   RS.field = {
     FIELD_RADIUS, newField, tick, alignmentOf, demandsFor, capacityOf,
     holdTimeOf, spawnNode, applyOffline, updateDerived,
-    applyPrimitives, passiveShareOf, holdsAntecedent, scopeBonus, DIAL_LOAD, ORDER_WINDOW
+    applyPrimitives, passiveShareOf, holdsAntecedent, scopeBonus, DIAL_LOAD, ORDER_WINDOW,
+    liveOption
   };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));

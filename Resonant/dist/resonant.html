@@ -1357,9 +1357,9 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     {
       id: 'thermal', name: 'Thermal', glyph: '≋',
       centre: 44, width: 6.0, minFocus: 0, hue: 24, sat: 0.62, mode: 'flux',
-      prim: ['flow'],
+      prim: ['flow', 'gate'],
       blurb: 'Disorder made visible. Everything here is on its way to equilibrium.',
-      rules: 'Nodes drift and cool. Coherence leaks unless you keep tracking.',
+      rules: 'Nodes drift and cool, and they gate. Track the leak, or wait the window.',
       yield: 1.5, drift: 1.5
     },
     {
@@ -1405,9 +1405,9 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     {
       id: 'causal', name: 'Causal', glyph: '⇴',
       centre: 542, width: 1.75, minFocus: 0.72, hue: 12, sat: 0.72, mode: 'causal',
-      prim: ['order'],
+      prim: ['order', 'flow'],
       blurb: 'The dependency graph underneath events. Time is a projection of this.',
-      rules: 'A node cannot be held before its antecedent. Order is the puzzle.',
+      rules: 'A node cannot be held before its antecedent, and the chain itself drifts.',
       yield: 16.0, drift: 0.6
     },
     {
@@ -1454,6 +1454,35 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 
   /* Does this band run this primitive? Hot path — called per node per frame. */
   function usesPrim(band, id) { return band.prim.indexOf(id) >= 0; }
+
+  /* Named play options for a band — compositions of its primitives, not a
+   * menu and not a minigame. The player chooses by how they hold. */
+  function optionsOf(band) {
+    const opts = [];
+    if (usesPrim(band, 'flow')) {
+      opts.push(band.drift < 1
+        ? { id: 'soak', label: 'SOAK' }
+        : { id: 'track', label: 'TRACK' });
+    }
+    opts.push({ id: 'hold', label: 'HOLD' });
+    if (usesPrim(band, 'gate')) {
+      opts.push({ id: 'window', label: 'WAIT' });
+      opts.push({ id: 'strike', label: 'STRIKE' });
+    }
+    if (usesPrim(band, 'twin')) opts.push({ id: 'collapse', label: 'COLLAPSE' });
+    if (usesPrim(band, 'nest')) opts.push({ id: 'dive', label: 'DIVE' });
+    if (usesPrim(band, 'order')) opts.push({ id: 'chain', label: 'CHAIN' });
+    if (usesPrim(band, 'invert')) opts.push({ id: 'mismatch', label: 'MISMATCH' });
+    if (band.id === 'unity') opts.push({ id: 'surrender', label: 'SURRENDER' });
+    const seen = Object.create(null);
+    const out = [];
+    for (let i = 0; i < opts.length; i++) {
+      if (seen[opts[i].id]) continue;
+      seen[opts[i].id] = 1;
+      out.push(opts[i]);
+    }
+    return out;
+  }
 
   /* How many axes a band asks of the player. Derived, not authored: it is
    * simply how many primitives are live, which is also exactly how much there
@@ -1598,7 +1627,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   RS.spectrum = {
     BANDS, BY_ID, PHI_MIN, PHI_MAX,
     effWidth, resonanceOf, isGhost, sample, blendVisual, bandsWithin, nearestBand, beatHz,
-    usesPrim, demandOf, frictionOf, FRICTION
+    usesPrim, demandOf, frictionOf, FRICTION, optionsOf
   };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));
 
@@ -3351,11 +3380,12 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
    *
    * φ and Σ are always fully demanded — they are which layer and which rung,
    * and nothing is legible without them. The consequence is a curve that is
-   * *shaped* rather than sloped: Baryonic and Thermal ask for nothing beyond
-   * the two dials you start with, Electromagnetic makes τ matter the instant
-   * you arrive, Probabilistic does the same for Δ, and Unity asks for all four
-   * at once. Each layer introduces the dial its own mechanics need, which is a
-   * better tutorial than a ramp because the reason is visible.
+   * *shaped* rather than sloped: Baryonic asks for nothing beyond the two
+   * dials you start with, Thermal adds GATE windows on a leaking flow,
+   * Electromagnetic makes τ the whole job, Probabilistic does the same for Δ,
+   * and Unity asks for all four at once. Each layer introduces the dial its
+   * own mechanics need, which is a better tutorial than a ramp because the
+   * reason is visible.
    */
   const DIAL_LOAD = {
     gate:   { phase: 0.15, rate: 0.90 },
@@ -3773,7 +3803,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
      * watching — but only where the layer is calm enough for anything to
      * settle, and split between however many primitives are competing for it.
      * Baryonic (one slow flow) is therefore the idle layer; Thermal, which
-     * runs the same primitive at four times the drift, pays nothing at all. */
+     * also gates, pays nothing at all. */
     game.insight += game.passiveRate * dt * passiveShareOf(RS.spectrum.BANDS[bandIndex]);
 
     if (RS.strike) RS.strike.tick(game, bus, dt);
@@ -4059,10 +4089,38 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     return { seconds: capped, gained };
   }
 
+  /* Which named option is live on the focused node. Derived from primitive
+   * state, not a menu. */
+  function liveOption(game, node) {
+    const n = node || game.focusNode;
+    const band = RS.spectrum.BANDS[game.field ? game.field.bandIndex : 0];
+    if (!n || !n.man) {
+      const opts = RS.spectrum.optionsOf(band);
+      return opts[0] || { id: 'hold', label: 'HOLD' };
+    }
+    if (RS.spectrum.usesPrim(band, 'gate') && n.gate < 0.42) {
+      return { id: 'window', label: 'WAIT' };
+    }
+    if (RS.spectrum.usesPrim(band, 'gate') && n.gate >= 0.55 && n.align > 0.62) {
+      return { id: 'strike', label: 'STRIKE' };
+    }
+    if (n.twinInfo && !n.collapsed) return { id: 'collapse', label: 'COLLAPSE' };
+    if (n.blocked) return { id: 'chain', label: 'CHAIN' };
+    if (n.depth > 0) return { id: 'dive', label: 'DIVE' };
+    if (RS.spectrum.usesPrim(band, 'invert')) return { id: 'mismatch', label: 'MISMATCH' };
+    if (RS.spectrum.usesPrim(band, 'flow') && band.drift >= 1) return { id: 'track', label: 'TRACK' };
+    if (RS.spectrum.usesPrim(band, 'flow') && band.drift < 1 && n.align < 0.35) {
+      return { id: 'soak', label: 'SOAK' };
+    }
+    if (band.id === 'unity' && n.align < 0.55) return { id: 'surrender', label: 'SURRENDER' };
+    return { id: 'hold', label: 'HOLD' };
+  }
+
   RS.field = {
     FIELD_RADIUS, newField, tick, alignmentOf, demandsFor, capacityOf,
     holdTimeOf, spawnNode, applyOffline, updateDerived,
-    applyPrimitives, passiveShareOf, holdsAntecedent, scopeBonus, DIAL_LOAD, ORDER_WINDOW
+    applyPrimitives, passiveShareOf, holdsAntecedent, scopeBonus, DIAL_LOAD, ORDER_WINDOW,
+    liveOption
   };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));
 
@@ -6674,7 +6732,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
      * surface each archetype expresses those differently — walker steps,
      * rover coasts, flier banks. */
     const powered = body.charge > 0.5 ? 1 : 0.15;
-    const accel = arch.thrust / arch.mass * authority * powered;
+    const accel = arch.thrust / effectiveMass(body) * authority * powered;
     const onPlanetSurface = env.medium === MEDIUM.SURFACE && game.scene && game.scene.kind === 'planet';
     let ax, ay, az = 0;
 
@@ -6816,6 +6874,8 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     let dragRate = arch.dragC * density * 0.35;
     if (env.biomeId === 'desert' || env.biomeId === 'dunes') dragRate *= 1.45;
     if (env.biomeId === 'shallows') dragRate *= 1.2;
+    if (env.biomeId === 'crystal') dragRate *= 0.7;
+    if (env.biomeId === 'lava') dragRate *= 1.8;
 
     body.vx += ax * dt;
     body.vy += ay * dt;
@@ -6855,7 +6915,8 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
      * next to a bright star you are not. */
     const exertion = tmag * arch.draw * (1 + env.gravity * 0.5);
     const hostility = (env.temperature > 340 || env.temperature < 180 ? 0.35 : 0) +
-      (env.pressure > 8 ? 0.3 : 0);
+      (env.pressure > 8 ? 0.3 : 0) +
+      (env.biomeId === 'lava' ? 0.55 : 0);
     body.charge -= (exertion + hostility * arch.draw * 0.5) * dt;
     body.charge += arch.regen * clamp01(0.25 + env.flux * 0.4) * dt;
     body.charge = clamp(body.charge, 0, arch.capacity);
@@ -11734,6 +11795,9 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     else if (s.kind === 'molecular') RS.molecular.tick(game, bus, dt);
     else if (s.kind === 'shells') RS.shells.tick(game, bus, dt);
 
+    if (game.inhabiting && s.kind === 'web') tickWebPlace(game, dt);
+    if (game.inhabiting && s.kind === 'foam') tickFoamPlace(game, dt);
+
     /* Relays keep channels open from other systems. Runs after the local
      * scene has had a chance to claim `s.contact`, and is a no-op unless
      * a probe or beacon is actually stationed somewhere. */
@@ -11959,6 +12023,26 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     body.y = Math.sin(s.orbitAngle) * rr * 0.62;
   }
 
+  function tickWebPlace(game, dt) {
+    const body = game.body;
+    if (!body || !RS.vessel.archOf(body).web) return;
+    const ctl = RS.vessel.controlsFrom(game);
+    const r = 0.18 + ctl.vert * 0.72;
+    body.heading += ctl.rate * dt * 0.85;
+    body.x = Math.cos(body.heading) * r;
+    body.y = Math.sin(body.heading) * r * 0.62;
+  }
+
+  function tickFoamPlace(game, dt) {
+    const body = game.body;
+    if (!body || RS.vessel.archOf(body).id !== 'flucton') return;
+    const ctl = RS.vessel.controlsFrom(game);
+    const r = 0.12 + ctl.vert * 0.55;
+    body.heading = ctl.heading;
+    body.x = Math.cos(body.heading) * r;
+    body.y = Math.sin(body.heading) * r;
+  }
+
   /* A civilisation with the player's influence applied — uplift, standing,
    * awareness. Same pattern as derivePlanet: derive, then layer deltas. */
   function civAt(game, planet, tGyr) {
@@ -12090,7 +12174,36 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       planetaryElev: r.elev,
       resource: RS.planet.resourceAt(s.planet, s.lon, s.lat)
     };
+    s.underfoot = underfootCard(game, s.surface);
     return s.surface;
+  }
+
+  function underfootCard(game, surf) {
+    const s = game.scene;
+    if (!s || !s.planet || !surf) return null;
+    const prof = terrainProfile(game, 0.048);
+    const mid = (prof.n / 2) | 0;
+    const sea = surf.sea;
+    let shore = null;
+    for (let i = mid + 1; i < prof.n; i++) {
+      if (prof.elev[mid] >= sea && prof.elev[i] < sea) { shore = 'east'; break; }
+    }
+    for (let i = mid - 1; i >= 0; i--) {
+      if (prof.elev[mid] >= sea && prof.elev[i] < sea) {
+        shore = shore === 'east' ? 'both' : 'west';
+        break;
+      }
+    }
+    const mean = (prof.elev[0] + prof.elev[prof.n - 1]) * 0.5;
+    const ridge = prof.elev[mid] > mean + 0.035;
+    const basin = prof.elev[mid] < mean - 0.035;
+    let seam = null, best = 0;
+    const local = surf.resource || {};
+    for (const k in local) if (local[k] > best) { best = local[k]; seam = k; }
+    return {
+      biome: surf.biome, shore, ridge, basin, seam,
+      n: prof.n
+    };
   }
 
   /* The terrain profile under the player: a side-on slice sampled from the
@@ -12511,6 +12624,37 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     if (first) amount += 2.8 + (s.planet.habitability || 0) * 8;
     if (s.planet.extracting) amount += RS.influence.passiveFrom(game, s.planet) * 1.8 * dim;
 
+    const arch = game.inhabiting && game.body ? RS.vessel.archOf(game.body) : null;
+    let kind = 'survey';
+    let scan = null;
+    if (arch && arch.reader) {
+      kind = 'scan';
+      let nearest = null, nd = 1e9;
+      for (let i = 0; i < (s.agents || []).length; i++) {
+        const a = s.agents[i];
+        const d = Math.hypot(wrapDeltaLon((a.lon || s.lon) - s.lon), (a.lat || s.lat) - s.lat);
+        if (d < nd) { nd = d; nearest = a; }
+      }
+      if (nearest && nearest.fauna) {
+        scan = { name: nearest.fauna.name || nearest.fauna.id, dist: nd };
+        amount += 0.8 * gnosisMul;
+      } else if (s.planet.civ || (s.tGyr != null && RS.civ.civOf(s.planet, s.tGyr))) {
+        const civ = s.planet.civ || RS.civ.civOf(s.planet, s.tGyr);
+        scan = { name: civ.name, dist: 0 };
+        amount += 1.2 * gnosisMul;
+      }
+    } else if (arch && arch.neural) {
+      kind = 'ride';
+    } else if (arch && arch.id === 'flier') {
+      kind = 'weather';
+      amount += clamp01(s.planet.pressure) * 0.6;
+    } else if (arch && arch.id === 'rover') {
+      kind = 'survey';
+      rec.work = Math.max(0, rec.work - 0.35);
+    } else if (arch && arch.extracts) {
+      kind = 'extract';
+    }
+
     rec.work += 1;
     rec.lastAt = now;
     game.stats.surveys = (game.stats.surveys || 0) + 1;
@@ -12533,10 +12677,11 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     if (bus && bus.emit) {
       bus.emit('place:pulse', {
         amount, rich, first, planet: s.planet, work: rec.work, extracted,
-        biome: patch && patch.biome, seam: seamName
+        biome: patch && patch.biome, seam: seamName, kind, scan
       });
     }
-    return { ok: true, amount, rich, first, extracted, biome: patch && patch.biome, seam: seamName };
+    return { ok: true, amount, rich, first, extracted, biome: patch && patch.biome,
+      seam: seamName, kind, scan };
   }
 
   /* Selling converts cargo to Insight at the local market price — which is why
@@ -12568,7 +12713,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     TIER_PLANET, TIER_STELLAR, TIER_SYSTEM, TIER_CELL, TIER_QUANTUM, TIER_GROUP, TIER_HUBBLE, TIER_ENSEMBLE, TIER_ATOMIC, TIER_MOLECULAR,
     SCENES, SCENE_BY_ID, sceneForTier, tierForScene, newScene, systemAddrFrom, systemKey, enterSystem, selectBody,
     derivePlanet, mostInteresting, tick, systemPositions, terrainProfile,
-    neighbourhood, cameraMode, cycleCamera, cameraLabel, sampleSurface, embark, disembark, extract, sell, pulse, richnessAt, PULSE_COOLDOWN, PROFILE_N,
+    neighbourhood, cameraMode, cycleCamera, cameraLabel, sampleSurface, underfootCard, embark, disembark, extract, sell, pulse, richnessAt, PULSE_COOLDOWN, PROFILE_N,
     FREE_W, FREE_H, nearestStandable, preferLandPose,
     TIER_CLUSTER, civAt, tickContact, wrapDeltaLon
   };
@@ -12835,9 +12980,20 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   function sceneVerb(game) {
     const s = game.scene;
     if (!s) return 'STRIKE';
-    if (s.kind === 'planet') return 'SURVEY';
+    if (s.kind === 'planet') {
+      if (game.inhabiting && game.body) {
+        const a = RS.vessel.archOf(game.body);
+        if (a.extracts) return 'EXTRACT';
+        if (a.reader) return 'SCAN';
+        if (a.neural) return 'RIDE';
+        if (a.id === 'flier') return 'SOUND';
+      }
+      return 'SURVEY';
+    }
     if (s.kind === 'system') return 'AIM';
     if (s.kind === 'galaxy') return game.galaxy && game.galaxy.target ? 'TRAVEL' : 'AIM';
+    if ((game.stats.crystals || 0) === 0) return 'STRIKE';
+    if (RS.field.liveOption) return RS.field.liveOption(game).label;
     return 'STRIKE';
   }
 
@@ -16312,11 +16468,21 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       if (!pt) continue;
       const f = a.fauna;
       const hue = f ? f.hue : 120;
-      const size = px(0.012);
-      ctx.fillStyle = hsl(hue, 0.65, 0.55, 0.85);
+      const size = px(0.014);
+      ctx.save();
+      ctx.translate(pt.x, pt.y);
+      ctx.rotate(a.heading || 0);
+      ctx.fillStyle = hsl(hue, 0.65, 0.55, 0.9);
       ctx.beginPath();
-      ctx.arc(pt.x, pt.y, size, 0, TAU);
+      ctx.ellipse(0, 0, size * 1.2, size * 0.7, 0, 0, TAU);
       ctx.fill();
+      ctx.strokeStyle = hsl(hue, 0.8, 0.75, 0.9);
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(size * 0.4, 0);
+      ctx.lineTo(size * 1.6, 0);
+      ctx.stroke();
+      ctx.restore();
       if (a.ridden) {
         ctx.strokeStyle = hsl(340, 0.9, 0.72, 0.6);
         ctx.lineWidth = 1.2;
@@ -18118,7 +18284,11 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       setText('layer-name', band.name.toUpperCase() + (ghost ? ' · GHOST' : ''));
       setText('layer-rules', ghost
         ? 'Beyond your focus. Visible, not holdable. Buy φ FOCUS to make it cohere.'
-        : band.rules);
+        : (function () {
+            const opts = RS.spectrum.optionsOf ? RS.spectrum.optionsOf(band) : [];
+            const names = opts.map(o => o.label).join(' · ');
+            return names ? band.rules + ' Options: ' + names + '.' : band.rules;
+          })());
       el['layer-name'].style.color = hsl(band.hue, ghost ? 0.15 : band.sat, 0.72);
     }
 
@@ -18226,6 +18396,11 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
           '" title="wear — change body before this reaches 100%">strain ' +
           Math.round(st.strain * 100) + '%</span>' : '') +
       (st.holdMass > 0 ? '<span class="bb-tag">' + fmt(st.holdMass) + 'u</span>' : '') +
+      (game.scene && game.scene.kind === 'planet' && game.scene.surface && game.scene.surface.biome
+        ? '<span class="bb-tag" title="underfoot">' + game.scene.surface.biome.name +
+          (game.scene.underfoot && game.scene.underfoot.ridge ? ' · ridge' : '') +
+          (game.scene.underfoot && game.scene.underfoot.shore ? ' · shore ' + game.scene.underfoot.shore : '') +
+          '</span>' : '') +
       (st.possession != null ? '<span class="bb-tag" style="color:#f0abfc" ' +
         'title="how much of this ' + (st.ridingCiv ? 'culture' : 'mind') + ' is you">' +
         (st.possession * 100).toFixed(0) + '% you</span>' : '') +

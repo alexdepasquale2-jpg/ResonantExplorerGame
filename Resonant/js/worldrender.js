@@ -459,11 +459,21 @@
       if (!pt) continue;
       const f = a.fauna;
       const hue = f ? f.hue : 120;
-      const size = px(0.012);
-      ctx.fillStyle = hsl(hue, 0.65, 0.55, 0.85);
+      const size = px(0.014);
+      ctx.save();
+      ctx.translate(pt.x, pt.y);
+      ctx.rotate(a.heading || 0);
+      ctx.fillStyle = hsl(hue, 0.65, 0.55, 0.9);
       ctx.beginPath();
-      ctx.arc(pt.x, pt.y, size, 0, TAU);
+      ctx.ellipse(0, 0, size * 1.2, size * 0.7, 0, 0, TAU);
       ctx.fill();
+      ctx.strokeStyle = hsl(hue, 0.8, 0.75, 0.9);
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(size * 0.4, 0);
+      ctx.lineTo(size * 1.6, 0);
+      ctx.stroke();
+      ctx.restore();
       if (a.ridden) {
         ctx.strokeStyle = hsl(340, 0.9, 0.72, 0.6);
         ctx.lineWidth = 1.2;

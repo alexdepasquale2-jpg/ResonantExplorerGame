@@ -12,7 +12,7 @@ backend, no assets. Runs offline from `index.html`.
 
 ```
 python3 -m http.server 8000      # then open http://localhost:8000/index.html
-node tools/simtest.js            # 2000 headless assertions, no DOM
+node tools/simtest.js            # 2023 headless assertions, no DOM
 node tools/build.mjs             # -> dist/resonant.html, one self-contained file
 ```
 

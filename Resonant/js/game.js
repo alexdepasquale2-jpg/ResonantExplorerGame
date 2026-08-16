@@ -257,9 +257,20 @@
   function sceneVerb(game) {
     const s = game.scene;
     if (!s) return 'STRIKE';
-    if (s.kind === 'planet') return 'SURVEY';
+    if (s.kind === 'planet') {
+      if (game.inhabiting && game.body) {
+        const a = RS.vessel.archOf(game.body);
+        if (a.extracts) return 'EXTRACT';
+        if (a.reader) return 'SCAN';
+        if (a.neural) return 'RIDE';
+        if (a.id === 'flier') return 'SOUND';
+      }
+      return 'SURVEY';
+    }
     if (s.kind === 'system') return 'AIM';
     if (s.kind === 'galaxy') return game.galaxy && game.galaxy.target ? 'TRAVEL' : 'AIM';
+    if ((game.stats.crystals || 0) === 0) return 'STRIKE';
+    if (RS.field.liveOption) return RS.field.liveOption(game).label;
     return 'STRIKE';
   }
 

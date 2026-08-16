@@ -63,9 +63,9 @@
     {
       id: 'thermal', name: 'Thermal', glyph: '≋',
       centre: 44, width: 6.0, minFocus: 0, hue: 24, sat: 0.62, mode: 'flux',
-      prim: ['flow'],
+      prim: ['flow', 'gate'],
       blurb: 'Disorder made visible. Everything here is on its way to equilibrium.',
-      rules: 'Nodes drift and cool. Coherence leaks unless you keep tracking.',
+      rules: 'Nodes drift and cool, and they gate. Track the leak, or wait the window.',
       yield: 1.5, drift: 1.5
     },
     {
@@ -111,9 +111,9 @@
     {
       id: 'causal', name: 'Causal', glyph: '⇴',
       centre: 542, width: 1.75, minFocus: 0.72, hue: 12, sat: 0.72, mode: 'causal',
-      prim: ['order'],
+      prim: ['order', 'flow'],
       blurb: 'The dependency graph underneath events. Time is a projection of this.',
-      rules: 'A node cannot be held before its antecedent. Order is the puzzle.',
+      rules: 'A node cannot be held before its antecedent, and the chain itself drifts.',
       yield: 16.0, drift: 0.6
     },
     {
@@ -160,6 +160,35 @@
 
   /* Does this band run this primitive? Hot path — called per node per frame. */
   function usesPrim(band, id) { return band.prim.indexOf(id) >= 0; }
+
+  /* Named play options for a band — compositions of its primitives, not a
+   * menu and not a minigame. The player chooses by how they hold. */
+  function optionsOf(band) {
+    const opts = [];
+    if (usesPrim(band, 'flow')) {
+      opts.push(band.drift < 1
+        ? { id: 'soak', label: 'SOAK' }
+        : { id: 'track', label: 'TRACK' });
+    }
+    opts.push({ id: 'hold', label: 'HOLD' });
+    if (usesPrim(band, 'gate')) {
+      opts.push({ id: 'window', label: 'WAIT' });
+      opts.push({ id: 'strike', label: 'STRIKE' });
+    }
+    if (usesPrim(band, 'twin')) opts.push({ id: 'collapse', label: 'COLLAPSE' });
+    if (usesPrim(band, 'nest')) opts.push({ id: 'dive', label: 'DIVE' });
+    if (usesPrim(band, 'order')) opts.push({ id: 'chain', label: 'CHAIN' });
+    if (usesPrim(band, 'invert')) opts.push({ id: 'mismatch', label: 'MISMATCH' });
+    if (band.id === 'unity') opts.push({ id: 'surrender', label: 'SURRENDER' });
+    const seen = Object.create(null);
+    const out = [];
+    for (let i = 0; i < opts.length; i++) {
+      if (seen[opts[i].id]) continue;
+      seen[opts[i].id] = 1;
+      out.push(opts[i]);
+    }
+    return out;
+  }
 
   /* How many axes a band asks of the player. Derived, not authored: it is
    * simply how many primitives are live, which is also exactly how much there
@@ -304,6 +333,6 @@
   RS.spectrum = {
     BANDS, BY_ID, PHI_MIN, PHI_MAX,
     effWidth, resonanceOf, isGhost, sample, blendVisual, bandsWithin, nearestBand, beatHz,
-    usesPrim, demandOf, frictionOf, FRICTION
+    usesPrim, demandOf, frictionOf, FRICTION, optionsOf
   };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));

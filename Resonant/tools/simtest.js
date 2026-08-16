@@ -355,8 +355,8 @@ function busCollecting(store) {
    * than sloped — each layer asks for the dial its own mechanics need. */
   const d0 = dem('baryonic');
   assert(d0.phase === 0 && d0.rate === 0, 'the first layer demands only φ and Σ');
-  assert(dem('thermal').phase === 0 && dem('thermal').rate === 0,
-    'and so does the second, because it runs the same primitive');
+  assert(dem('thermal').rate > 0.7,
+    'Thermal introduces GATE windows, so τ becomes load-bearing there');
 
   /* Each dial arrives with the primitive that needs it, and arrives sharply. */
   assert(dem('electromagnetic').rate > 0.8,
@@ -4898,6 +4898,63 @@ const posOut = { x: 0, y: 0, z: 0, r: 0 };
 
   const html = RS.ui.codexHTML(gS);
   assert(/elat/.test(html), 'the codex draws a lattice of scopes');
+}
+
+{
+  for (let i = 0; i < RS.spectrum.BANDS.length; i++) {
+    const b = RS.spectrum.BANDS[i];
+    const opts = RS.spectrum.optionsOf(b);
+    assert(opts.length >= 2, b.name + ' has at least two play options (' + opts.length + ')');
+  }
+  assert(RS.spectrum.usesPrim(RS.spectrum.BY_ID.thermal, 'gate'),
+    'Thermal is flow plus windows, not Baryonic with a drift knob');
+  assert(RS.spectrum.usesPrim(RS.spectrum.BY_ID.causal, 'flow'),
+    'Causal chains drift — order is not a still puzzle');
+  assert(!RS.spectrum.usesPrim(RS.spectrum.BY_ID.baryonic, 'gate'),
+    'Baryonic stays the soak layer');
+
+  const gOpt = RS.game.newGame(11);
+  const soak = RS.field.liveOption(gOpt);
+  assert(soak && soak.label, 'a live option is named even before a lock');
+  assert(RS.game.sceneVerb(gOpt) === soak.label || RS.game.sceneVerb(gOpt) === 'HOLD' ||
+    RS.game.sceneVerb(gOpt) === 'STRIKE',
+    'the verb chip names a field option');
+
+  const gP = RS.game.newGame(3);
+  gP.scene.kind = 'planet';
+  gP.inhabiting = true;
+  gP.body = RS.vessel.newBody('probe');
+  gP.scene.planet = RS.planet.planetAt(RS.stellar.systemAt(gP.seed, 0, 0, 0), 0);
+  if (gP.scene.planet) {
+    RS.scenes.sampleSurface(gP);
+    const card = RS.scenes.underfootCard(gP, gP.scene.surface);
+    assert(card && card.n === 96, 'underfoot card is the same 96 samples');
+    const pProbe = RS.scenes.pulse(gP, nullBus);
+    assert(pProbe.ok && pProbe.kind === 'scan', 'a probe pulse is a scan, not a survey');
+    gP.body = RS.vessel.newBody('walker');
+    gP.stats.playSeconds = 10;
+    const pWalk = RS.scenes.pulse(gP, nullBus);
+    assert(pWalk.ok && pWalk.kind === 'survey', 'a walker pulse is still a survey');
+  }
+
+  const heavy = RS.vessel.newBody('harvester');
+  heavy.holdMass = 40;
+  assert(RS.vessel.effectiveMass(heavy) > RS.vessel.archOf(heavy).mass,
+    'cargo makes a harvester heavier');
+  const envH = {
+    medium: RS.vessel.MEDIUM.SURFACE, gravity: 1, pressure: 1, temperature: 288,
+    flux: 1, roughness: 0.2, slope: 0, fallEast: 0, fallNorth: 0,
+    biomeId: 'grass', hasMinds: false, label: 'T', groundY: 0
+  };
+  const light = RS.vessel.newBody('harvester');
+  light.heading = 0; light.y = 0; light.charge = 200; light.gaitPhase = 0.25;
+  heavy.heading = 0; heavy.y = 0; heavy.charge = 200; heavy.gaitPhase = 0.25;
+  const gH = RS.game.newGame(1);
+  gH.scene.kind = 'planet';
+  RS.vessel.integrate(gH, light, envH, { rate: 1, heading: 0, vert: 0.5, band: 0 }, 0.2);
+  RS.vessel.integrate(gH, heavy, envH, { rate: 1, heading: 0, vert: 0.5, band: 0 }, 0.2);
+  assert(Math.hypot(light.vx, light.vz) > Math.hypot(heavy.vx, heavy.vz),
+    'a loaded harvester is sluggish');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
