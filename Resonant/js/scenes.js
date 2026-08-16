@@ -339,6 +339,8 @@
         game.galaxy.sx = s.systemAddr.sx;
         game.galaxy.sy = s.systemAddr.sy;
       }
+      game.galaxy.driftX = 0;
+      game.galaxy.driftY = 0;
       game.galaxy.cacheKey = '';
       RS.galaxy.refresh(game);
     } else if (kind === 'system') {
@@ -633,6 +635,30 @@
     if (!game.inhabiting) return 'globe';
     if (s.altitude > 0.22) return 'freeroam';
     return 'sideon';
+  }
+
+  /* Player-facing cycle: AUTO → SIDE-ON → MAP → AUTO.
+   * Globe stays an observing / debug mode, not a walk cycle. */
+  function cycleCamera(game) {
+    const s = game.scene;
+    if (!s || s.kind !== 'planet' || !game.inhabiting) {
+      return { ok: false, reason: 'not piloting a planet' };
+    }
+    if (s.forceCam == null) s.forceCam = 'sideon';
+    else if (s.forceCam === 'sideon') s.forceCam = 'freeroam';
+    else s.forceCam = null;
+    return { ok: true, forceCam: s.forceCam, mode: cameraMode(game) };
+  }
+
+  function cameraLabel(game) {
+    const s = game.scene;
+    if (!s || s.kind !== 'planet' || !game.inhabiting) {
+      return game.inhabiting ? 'PILOTING' : 'OBSERVING';
+    }
+    if (s.forceCam === 'freeroam') return 'MAP';
+    if (s.forceCam === 'sideon') return 'SIDE-ON';
+    if (s.forceCam === 'globe') return 'GLOBE';
+    return 'AUTO';
   }
 
   function tickPlanet(game, bus, dt) {
@@ -944,7 +970,7 @@
     TIER_PLANET, TIER_STELLAR, TIER_SYSTEM, TIER_CELL, TIER_QUANTUM, TIER_GROUP, TIER_HUBBLE, TIER_ENSEMBLE, TIER_ATOMIC, TIER_MOLECULAR,
     SCENES, SCENE_BY_ID, sceneForTier, tierForScene, newScene, systemAddrFrom, systemKey, enterSystem, selectBody,
     derivePlanet, mostInteresting, tick, systemPositions, terrainProfile,
-    neighbourhood, cameraMode, sampleSurface, embark, disembark, extract, sell, PROFILE_N,
+    neighbourhood, cameraMode, cycleCamera, cameraLabel, sampleSurface, embark, disembark, extract, sell, PROFILE_N,
     FREE_W, FREE_H,
     TIER_CLUSTER, civAt, tickContact, wrapDeltaLon
   };

@@ -35,9 +35,11 @@ Developer cheat HUD (debug only):
   APIs (`js/debug.js`).
 
 Planet cameras (while inhabiting): near-ground is the side-on slice; altitude
-above ~0.22 (or a debug force) is the 48×32 freeroam neighbourhood; observing
-is still the globe. Sample counts are fixed — do not grow them with zoom. No
-heightmaps: `effective = derived(address) ⊕ deltas`.
+above ~0.22 is the 48×32 freeroam neighbourhood; observing is still the globe.
+Cycle with the scene tag, `C`, or a tap on empty ground (AUTO → SIDE-ON → MAP).
+The debug HUD can still force a mode, including globe. Sample counts are fixed
+— do not grow them with zoom. No heightmaps: `effective = derived(address) ⊕
+deltas`.
 
 Non-obvious notes for developing/testing in the browser:
 

@@ -4297,6 +4297,173 @@ const posOut = { x: 0, y: 0, z: 0, r: 0 };
   assert(tel.ok && Math.abs(g.scene.lat - 45 * Math.PI / 180) < 1e-6, 'debug teleport sets latitude');
   const cam = RS.debug.setCam(g, 'freeroam');
   assert(cam.ok && g.scene.forceCam === 'freeroam', 'debug force camera mode');
+
+  /* Player-facing camera cycle: AUTO → SIDE-ON → MAP → AUTO. */
+  g.inhabiting = true;
+  g.scene.kind = 'planet';
+  g.scene.forceCam = null;
+  assert(RS.scenes.cameraLabel(g) === 'AUTO', 'auto camera labels as AUTO');
+  const c1 = RS.scenes.cycleCamera(g);
+  assert(c1.ok && c1.forceCam === 'sideon' && RS.scenes.cameraLabel(g) === 'SIDE-ON',
+    'first cycle locks side-on');
+  const c2 = RS.scenes.cycleCamera(g);
+  assert(c2.ok && c2.forceCam === 'freeroam' && RS.scenes.cameraLabel(g) === 'MAP',
+    'second cycle locks the neighbourhood map');
+  const c3 = RS.scenes.cycleCamera(g);
+  assert(c3.ok && c3.forceCam === null && RS.scenes.cameraLabel(g) === 'AUTO',
+    'third cycle returns to altitude auto');
+  g.inhabiting = false;
+  assert(!RS.scenes.cycleCamera(g).ok, 'cycle refuses while observing');
+  assert(RS.scenes.cameraLabel(g) === 'OBSERVING', 'observing label is unchanged');
+}
+
+/* Downhill is a fall line. Ice must outrun grass; desert must not. */
+{
+  function slideCase(biomeId) {
+    const g = RS.game.newGame(77);
+    g.scene.kind = 'planet';
+    g.inhabiting = true;
+    const body = RS.vessel.newBody('walker');
+    body.y = 0; body.vx = 0; body.vz = 0; body.charge = 80;
+    const env = {
+      medium: RS.vessel.MEDIUM.SURFACE,
+      gravity: 1, pressure: 1, temperature: 250, flux: 1,
+      roughness: 0.2, slope: 0, fallEast: 0.12, fallNorth: 0,
+      biomeId, hasMinds: false, label: 'T'
+    };
+    const ctl = { rate: 0, vert: 0.5, heading: 0, band: null, phi: 0 };
+    for (let i = 0; i < 45; i++) RS.vessel.integrate(g, body, env, ctl, 1 / 30);
+    return body.vx;
+  }
+  const iceVx = slideCase('ice');
+  const grassVx = slideCase('grass');
+  const desertVx = slideCase('desert');
+  assert(iceVx > 0.01, 'downhill produces motion without throttle (' + iceVx.toFixed(3) + ')');
+  assert(iceVx > grassVx * 1.25, 'ice slides downhill faster than grass (' +
+    iceVx.toFixed(3) + ' vs ' + grassVx.toFixed(3) + ')');
+  assert(desertVx < grassVx, 'sand slides less than grass (' +
+    desertVx.toFixed(3) + ' vs ' + grassVx.toFixed(3) + ')');
+}
+
+/* Galaxy vacuum drift is an address change, not a leash. */
+{
+  const g = RS.game.newGame(601);
+  g.scene.kind = 'galaxy';
+  g.inhabiting = true;
+  g.body = RS.vessel.newBody('courier');
+  g.body.vx = 10; g.body.vy = 0; g.body.charge = 80;
+  g.galaxy.sx = 0; g.galaxy.sy = 0;
+  g.galaxy.driftX = 0.46; g.galaxy.driftY = 0;
+  const sx0 = g.galaxy.sx;
+  const systems0 = Object.keys(g.known.systems).length;
+  RS.galaxy.refresh(g);
+  for (let i = 0; i < 20; i++) RS.galaxy.tick(g, nullBus, 1 / 30);
+  assert(g.galaxy.sx === sx0 + 1, 'crossing half a sector steps sx (' + g.galaxy.sx + ')');
+  assert(g.galaxy.sy === 0, 'orthogonal drift does not step sy');
+  assert(g.scene.kind === 'galaxy', 'drift does not enter a system');
+  assert(Object.keys(g.known.systems).length === systems0, 'and does not record a visit');
+  assert(Math.abs(g.galaxy.driftX) < 0.5, 'the fraction wraps rather than accumulating');
+  const serial = RS.save.serialise(g);
+  assert(serial.galaxy.sx === g.galaxy.sx && serial.galaxy.sy === g.galaxy.sy,
+    'save persists the drifted sector address');
+  assert(serial.galaxy.driftX == null, 'and does not persist the ephemeral fraction');
+
+  /* Stillness does not walk. */
+  const sxHold = g.galaxy.sx;
+  g.body.vx = 0; g.body.vy = 0;
+  g.galaxy.driftX = 0.1;
+  RS.galaxy.tick(g, nullBus, 1);
+  assert(g.galaxy.sx === sxHold, 'a parked courier does not change sector');
+}
+
+/* Rumour census: hashed, wider, still capped. */
+{
+  const g = RS.game.newGame(12345);
+  let maxN = 0, calls = 0, selfHit = 0, bad = 0;
+  outerN:
+  for (let sx = 0; sx < 24; sx++) {
+    for (let sy = 0; sy < 8; sy++) {
+      for (let ix = 0; ix < 5; ix++) {
+        const sys = RS.stellar.systemAt(g.seed, sx, sy, ix);
+        for (let j = 0; j < sys.bodies.length; j++) {
+          if (sys.bodies[j].kind !== 'planet') continue;
+          const p = RS.planet.planetAt(sys, j);
+          if (!p) continue;
+          const civ = RS.civ.civOf(p, 0);
+          if (!civ) continue;
+          const observer = Object.assign({}, civ, { tier: RS.civ.techTierOf(0.9) });
+          const n = RS.contact.neighboursOf(g, p, observer);
+          calls++;
+          maxN = Math.max(maxN, n.length);
+          const seen = Object.create(null);
+          for (const nb of n) {
+            if (!nb.planet || !nb.civ) bad++;
+            const k = nb.planet.system.addr.sx + ',' + nb.planet.system.addr.sy + ',' +
+              nb.planet.system.addr.index + ',' + nb.planet.bodyIndex;
+            if (seen[k]) bad++;
+            seen[k] = 1;
+            if (nb.planet.system.addr.sx === p.system.addr.sx &&
+                nb.planet.system.addr.sy === p.system.addr.sy &&
+                nb.planet.system.addr.index === p.system.addr.index &&
+                nb.planet.bodyIndex === p.bodyIndex) selfHit++;
+          }
+          if (calls >= 40) break outerN;
+        }
+      }
+    }
+  }
+  assert(calls > 0, 'rumour census ran against real cultures');
+  assert(bad === 0, 'neighbours are unique derived cultures');
+  assert(selfHit === 0, 'a culture never names itself');
+  assert(maxN <= 8, 'the census is still capped at eight');
+  assert(maxN > 5, 'widening the sample can name more than five neighbours (' + maxN + ')');
+}
+
+/* Bloom stride is optional; the field uses a cheaper skip. */
+{
+  RS.bloom.setEnabled(true);
+  const buf = RS.bloom.begin(64, 48, 1);
+  assert(buf, 'bloom world buffer is available for a stride capture');
+  RS.bloom.captureWorld(64, 48, 0.4);
+  RS.bloom.captureWorld(64, 48, 0.4, 3);
+  assert(RS.bloom.STRIDE === 2, 'the default stride is still every other frame');
+}
+
+/* Guide copy for an orbital symbiont ride. */
+{
+  const g = RS.game.newGame(12345);
+  let found = null;
+  outerRide:
+  for (let sx = 0; sx < 40; sx++) {
+    for (let sy = 0; sy < 8; sy++) {
+      for (let ix = 0; ix < 3; ix++) {
+        const sys = RS.stellar.systemAt(g.seed, sx, sy, ix);
+        for (let j = 0; j < sys.bodies.length; j++) {
+          if (sys.bodies[j].kind !== 'planet') continue;
+          const p = RS.planet.planetAt(sys, j);
+          if (!p) continue;
+          const civ = RS.civ.civOf(p, 0);
+          if (civ) { found = { p, civ }; break outerRide; }
+        }
+      }
+    }
+  }
+  assert(found, 'orbital-ride copy has a culture');
+  g.scene.kind = 'system';
+  g.scene.planet = found.p;
+  g.scene.planet.civ = found.civ;
+  g.inhabiting = true;
+  g.body = RS.vessel.newBody('symbiont');
+  g.vessels.unlocked.symbiont = true;
+  const html = RS.guide.guideHTML(g);
+  assert(/one scale up/i.test(html),
+    'the guide names an orbital ride while in the symbiont');
+  const next = RS.guide.pathwaysHTML(g);
+  assert(/Stay in the symbiont/i.test(next),
+    'a pathway next-step mentions the orbital ride');
+  g.body.ridingCiv = true;
+  const rows = RS.guide.dialRows(g);
+  assert(/culture/i.test(rows[0].note), 'dial copy names the culture while riding it');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

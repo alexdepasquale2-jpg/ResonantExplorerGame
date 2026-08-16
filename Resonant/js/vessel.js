@@ -203,7 +203,7 @@
       const surf = scene.surface || {};
       const water = surf.sea != null ? surf.sea : RS.planet.seaLevel(p);
       const submerged = surf.elev != null && surf.elev < water;
-      let slope = 0;
+      let slope = 0, fallEast = 0, fallNorth = 0;
       if (game.inhabiting && game.body) {
         const heading = game.body.heading;
         const step = 0.005;
@@ -213,6 +213,12 @@
           scene.lon + Math.cos(heading) * step / clat,
           scene.lat + Math.sin(heading) * step);
         slope = e1 - e0;
+        /* Fall line is the negative gradient, independent of heading, so a
+         * body on ice slides downhill even when τ is centred. */
+        const eE = RS.planet.elevationDetailAt(p, scene.lon + step / clat, scene.lat);
+        const eN = RS.planet.elevationDetailAt(p, scene.lon, scene.lat + step);
+        fallEast = e0 - eE;
+        fallNorth = e0 - eN;
       }
       const biomeId = surf.biome && surf.biome.id;
       return {
@@ -223,6 +229,8 @@
         flux: p.flux,
         roughness: clamp01(p.tectonics * 0.8 + p.cratering * 0.5 + Math.abs(slope) * 2),
         slope,
+        fallEast,
+        fallNorth,
         biomeId,
         hasMinds: !!(p.biosphere && p.biosphere.complexity > 0.5),
         label: p.name
@@ -488,6 +496,16 @@
     if (onPlanetSurface && env.slope > 0) {
       const hill = 1 / (1 + env.slope * 5);
       ax *= hill; az *= hill;
+    }
+    /* Downhill is a fall line. Uphill already taxes thrust; without this,
+     * ice and grass feel the same the moment you stop walking. */
+    if (onPlanetSurface && body.y >= -0.05) {
+      const slip = env.biomeId === 'ice' ? 1.8
+        : (env.biomeId === 'desert' || env.biomeId === 'dunes') ? 0.25
+        : 0.55;
+      const fall = env.gravity * 2.4 * slip;
+      ax += (env.fallEast || 0) * fall;
+      az += (env.fallNorth || 0) * fall;
     }
 
     // --- drag / friction --------------------------------------------------

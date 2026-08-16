@@ -478,10 +478,10 @@ surface without gaining a second control.
 
 Embodied on a planet you walk a **lon/lat tangent plane** against the derived
 heightfield. Near the ground the camera is a rich side-on slice (multi-biome
-silhouette, live waterline). Climb or toggle and it becomes a 48×32 freeroam
-neighbourhood of the same samples. Observing still uses the globe. Switching
-never teleports: pose is `(lon, lat, altitude)` and nothing about the sphere
-is stored.
+silhouette, live waterline). Climb, tap the scene tag, or press C and it becomes
+a 48×32 freeroam neighbourhood of the same samples. Observing still uses the
+globe. Switching never teleports: pose is `(lon, lat, altitude)` and nothing
+about the sphere is stored.
 
 ### And silence where there is no medium
 
@@ -845,9 +845,7 @@ landed, and the invariants are held by 1652 assertions rather than by intention:
 What a next pass would most usefully do, in order of how much it would change
 the game:
 
-- **Bloom cost in the attunement field.** The world buffer removes the flush;
-  the remaining threshold/blur is still the dearest post pass.
-- **A census of rumours.** Neighbour sampling is hashed and capped; widening
-  it is safe and cheap compared to a full sector walk.
-- **Guide copy for riding a culture.** The symbiont now works in orbit when a
-  civilisation is selected. The live guide still leads with riding a creature.
+- **Feel of a sector crossing.** Vacuum drift now changes `galaxy.sx/sy`; the
+  map still recentres in one frame.
+- **Foam remains embark-blocked.** A foam-native body would need its own
+  medium, not a weakening of `embark`.

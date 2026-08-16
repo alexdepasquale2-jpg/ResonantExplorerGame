@@ -69,6 +69,15 @@
     el['btn-contact'].addEventListener('click', () => toggleDrawer(game, bus, 'contact'));
     el['btn-drawer-close'].addEventListener('click', () => closeDrawer());
 
+    /* Scene tag is the player-facing camera cycle while piloting a planet. */
+    if (el['scene-tag']) {
+      el['scene-tag'].addEventListener('click', () => {
+        if (!game.inhabiting || !game.scene || game.scene.kind !== 'planet') return;
+        const r = RS.scenes.cycleCamera(game);
+        if (r.ok) bus.emit('scene:camera', { forceCam: r.forceCam, mode: r.mode });
+      });
+    }
+
     el['drawer-tabs'].addEventListener('click', ev => {
       const t = ev.target.closest('[data-tab]');
       if (t) { lastTab = t.dataset.tab; openDrawer(game, bus, t.dataset.tab); }
@@ -324,9 +333,16 @@
      * which mode the dials are in, because that is the one thing they must
      * never be wrong about. */
     const s = game.scene;
-    const modeLabel = game.inhabiting ? 'PILOTING' : 'OBSERVING';
+    const modeLabel = RS.scenes.cameraLabel ? RS.scenes.cameraLabel(game)
+      : (game.inhabiting ? 'PILOTING' : 'OBSERVING');
     setText('scene-tag', s.kind.toUpperCase() + ' · ' + modeLabel);
     el['scene-tag'].style.color = game.inhabiting ? '#fca5a5' : '#7dd3fc';
+    if (el['scene-tag']) {
+      el['scene-tag'].title = (s.kind === 'planet' && game.inhabiting)
+        ? 'Tap or press C to cycle SIDE-ON / MAP / AUTO'
+        : '';
+      el['scene-tag'].style.cursor = (s.kind === 'planet' && game.inhabiting) ? 'pointer' : 'default';
+    }
 
     renderBodyBar(game);
     renderContactHint(game);

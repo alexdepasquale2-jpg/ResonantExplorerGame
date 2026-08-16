@@ -186,13 +186,18 @@
           const idx = pickBody(game, a.startX, a.startY);
           if (idx >= 0 && handlers && handlers.onPickBody) handlers.onPickBody(idx);
         } else if (scene.kind === 'planet') {
-          /* Tapping the globe picks a latitude to descend to. */
+          /* Tapping the globe picks a latitude to descend to. Embodied, the
+           * same tap cycles SIDE-ON / MAP / AUTO — altitude still switches
+           * when the tag reads AUTO. */
           if (!game.inhabiting) {
             const V = RS.render.view;
             const dy = (a.startY - V.cy) / (V.R * 0.62);
             scene.lat = clamp(-Math.asin(clamp(dy, -1, 1)), -1.5, 1.5);
             RS.scenes.sampleSurface(game);
             bus.emit('scene:aim', { lat: scene.lat });
+          } else if (RS.scenes.cycleCamera) {
+            const r = RS.scenes.cycleCamera(game);
+            if (r.ok) bus.emit('scene:camera', { forceCam: r.forceCam, mode: r.mode });
           }
         } else {
           const hit = pickNode(game, a.startX, a.startY);
@@ -244,6 +249,14 @@
       }
       const ids = ['time', 'space', 'phase', 'frequency'];
       if (e.key === 'Tab') { kbIndex = (kbIndex + 1) % 4; e.preventDefault(); bus.emit('dial:jump', { dial: game.dials[ids[kbIndex]] }); return; }
+      if (e.key === 'c' || e.key === 'C') {
+        if (game.inhabiting && game.scene && game.scene.kind === 'planet' && RS.scenes.cycleCamera) {
+          e.preventDefault();
+          const r = RS.scenes.cycleCamera(game);
+          if (r.ok) bus.emit('scene:camera', { forceCam: r.forceCam, mode: r.mode });
+        }
+        return;
+      }
       const dial = game.dials[ids[kbIndex]];
       let d = 0;
       if (e.key === 'ArrowRight' || e.key === 'ArrowUp') d = 1;

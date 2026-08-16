@@ -56,13 +56,18 @@
 
     if (embodied) {
       const m = arch.dialMap;
+      const ridingCiv = !!(game.body && game.body.ridingCiv);
       return [
         { sym: 'τ', hue: 43, name: 'Time', does: m.time,
           now: D.time.value.toFixed(2) + '×',
-          note: 'While you have a body, τ is your throttle. Negative reverses.' },
+          note: ridingCiv
+            ? 'τ leans on this culture\'s trajectory. You influence; you do not command.'
+            : 'While you have a body, τ is your throttle. Negative reverses.' },
         { sym: 'Σ', hue: 338, name: 'Space', does: m.space,
           now: (clamp01((D.space.value - D.space.min) / Math.max(1e-6, D.space.max - D.space.min)) * 100).toFixed(0) + '%',
-          note: 'Your vertical axis in this body — it does not move the scale ladder while embodied.' },
+          note: ridingCiv
+            ? 'Depth of hold on the civilisation — the same axis as riding a creature, one scale up.'
+            : 'Your vertical axis in this body — it does not move the scale ladder while embodied.' },
         { sym: 'Δ', hue: 268, name: 'Phase', does: m.phase,
           now: (D.phase.value * 57.3).toFixed(0) + '°',
           note: 'A closed circle, which is exactly what a heading is.' },
@@ -115,6 +120,17 @@
       '<div>Scale <b>' + RS.cosmos.tierAt(D.space.value).name + '</b></div>' +
       '<div>Next <b>' + RS.game.sceneObjective(game).text.slice(0, 46) + '</b></div>' +
       '</div></section>';
+
+    if (game.inhabiting && sc.kind === 'planet') {
+      h += '<section><h3>Two cameras, one sphere</h3>' +
+        '<p class="blurb">Near the ground is the side-on slice. Climb, tap the scene tag, ' +
+        'or press <b>C</b> for the neighbourhood map. Pose is shared — switching never teleports.</p></section>';
+    }
+    if (game.inhabiting && RS.vessel.archOf(game.body).id === 'symbiont') {
+      h += '<section><h3>Riding a mind</h3>' +
+        '<p class="blurb">On the surface that is a creature. In orbit, with a civilisation selected, ' +
+        'it is the culture itself — same body, one scale up. τ leans; you do not command.</p></section>';
+    }
 
     // ── the dials, as they mean things right now ──
     h += '<section><h3>Your four dials <em>' +
@@ -341,6 +357,12 @@
   }
 
   function nextReach(game) {
+    if (game.inhabiting && game.body && game.body.archId === 'symbiont' && !game.body.ridingCiv) {
+      const env = RS.vessel.environmentFor(game);
+      if (env.hasMinds && env.medium === RS.vessel.MEDIUM.ORBIT) {
+        return 'A selected civilisation is a mind at this scale. Stay in the symbiont and lean with τ.';
+      }
+    }
     const open = RS.influence.RESEARCH.filter(n => RS.influence.researchAvailable(game, n));
     if (open.length) {
       const cheap = open.reduce((a, b) => (a.cost < b.cost ? a : b));
@@ -472,6 +494,14 @@
   }
 
   function nextContact(game) {
+    if (game.inhabiting && game.body && game.body.archId === 'symbiont') {
+      const env = RS.vessel.environmentFor(game);
+      if (env.hasMinds && env.medium === RS.vessel.MEDIUM.ORBIT) {
+        return game.body.ridingCiv
+          ? 'You are riding this culture. τ leans on their trajectory — they do not become a creature.'
+          : 'A civilisation is a mind at this scale. Stay in the symbiont; τ leans, you do not command.';
+      }
+    }
     const met = RS.contact.totalMet(game);
     const c = game.scene.contact;
     if (c) {

@@ -326,14 +326,22 @@
       }
       const p = s.planet;
       if (p && p.biosphere && p.biosphere.complexity > 0.34) {
-        return { text: 'Life here. Ride a mind with the symbiont, or turn Σ inward to enter a cell.',
+        if (st && st.ridingCiv) {
+          return { text: 'Riding this culture. τ leans on their trajectory — they do not become a creature.',
+            kind: 'explore' };
+        }
+        if (st && st.arch && st.arch.id === 'symbiont') {
+          return { text: 'The symbiont rides a mind here, or a civilisation from orbit. Tap the scene tag or C to change camera.',
+            kind: 'explore' };
+        }
+        return { text: 'Life here. Ride a mind with the symbiont — in orbit that is a civilisation — or turn Σ inward to enter a cell.',
           kind: 'explore' };
       }
       if (p && p.resources && p.resources.length) {
         return { text: 'Seams below. Extract with the harvester, or build from the world panel.',
           kind: 'explore' };
       }
-      return { text: 'Walk it. Δ steers, and φ changes what you can sense.', kind: 'pilot' };
+      return { text: 'Walk it. Δ steers, φ senses. Tap the scene tag or C to switch SIDE-ON / MAP.', kind: 'pilot' };
     }
     return nextObjective(game);
   }

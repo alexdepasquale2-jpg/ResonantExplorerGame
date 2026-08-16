@@ -87,8 +87,9 @@ a second world:
 - **Observing** → globe (baked 96×48 biome table, unchanged).
 - **Near the ground** → rich side-on slice (96-sample profile, multi-biome fill,
   tide waterline, parallax far band).
-- **Altitude above ~0.22, or a debug/force toggle** → 48×32 freeroam
-  neighbourhood. Zoom opens the span; sample count does not.
+- **Altitude above ~0.22, or a camera toggle** → 48×32 freeroam
+  neighbourhood. Zoom opens the span; sample count does not. Toggle with
+  the scene tag, `C`, or a tap on empty ground while inhabiting.
 
 Pose is `(scene.lon, scene.lat, scene.altitude)`. Agents live in lon/lat.
 Saves still persist only those numbers. Debug HUD can teleport and dump the
@@ -246,27 +247,23 @@ rather than a number.
 
 ## 7. What to do next, in order of value
 
-The vessel open-world pass has landed: planetary geology (essence meso-detail,
-multi-biome profiles, live tides, seasons, `resourceAt`), lon/lat freeroam plus
-rich side-on sharing one heightfield, and place-aware vessel glyphs in
-cellular / system / galaxy / field / web / molecular / shells.
+The vessel open-world pass and its follow-up have landed: planetary geology,
+lon/lat freeroam plus rich side-on, place-aware vessel glyphs, galaxy vacuum
+drift as a real `sx/sy` address change, a player-facing camera cycle, downhill
+fall-line slides, a wider rumour census, cheaper bloom in the attunement field,
+and guide copy for riding a culture from orbit.
 
 What is still worth doing:
 
-1. **Bloom cost in the attunement field.** The world buffer removes the flush;
-   the remaining ~1.3 ms of threshold/blur is still the dearest post in the
-   game. A cheaper threshold (or skipping STRIDE more aggressively in that
-   scope) is the next fps win, if any.
-2. **A census of rumours.** Neighbour sampling is hashed and capped; a culture
-   whose only neighbour sits outside the sample will not name them. Widening
-   the sample is safe and cheap compared to a full sector walk.
-3. **Guide copy for riding a culture.** The symbiont now works in orbit. The
-   live guide still talks about riding a creature first, which is the common
-   case, but an orbital ride is easy to miss.
-4. **Galaxy vacuum drift** is a short leash around the current sector. A
-   transfer that actually changes `galaxy.sx/sy` would make the courier's
-   interstellar job real, but it has to stay an address change, not a stored
-   path.
+1. **Feel of a sector crossing.** The address change is real; the map
+   recentres in one frame. A short ease or a toast naming the snapped star
+   would make the courier's hop read as travel rather than a cut.
+2. **Foam remains embark-blocked.** That is the live rule (`Σ` is vertical
+   while embodied). If a later pass wants a foam-native body, it has to be
+   a new medium, not a weakening of `embark`.
+3. **Sample budgets stay fixed.** Do not grow the profile, neighbourhood, or
+   globe grids with zoom. If a scope feels empty, derive a different question
+   of the same samples.
 
 ---
 

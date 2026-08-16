@@ -250,13 +250,13 @@
     const h = planet.hash;
     const out = [];
     const seen = Object.create(null);
-    const samples = 10 + civ.tier.reach * 6;
-    for (let i = 0; i < samples && out.length < 5; i++) {
+    const samples = 18 + civ.tier.reach * 10;
+    for (let i = 0; i < samples && out.length < 8; i++) {
       const ang = hashF(h, 210 + i) * Math.PI * 2;
       const rad = 0.15 + hashF(h, 310 + i) * R;
       const sx = Math.round(addr.sx + Math.cos(ang) * rad);
       const sy = Math.round(addr.sy + Math.sin(ang) * rad);
-      const ix = hashN(h, 410 + i) % 3;
+      const ix = hashN(h, 410 + i) % 5;
       const key = sx + ',' + sy + ',' + ix;
       if (seen[key]) continue;
       seen[key] = true;
