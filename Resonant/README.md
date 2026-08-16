@@ -259,6 +259,11 @@ generated from live state rather than written out:
   BEYOND run in opposite directions from the root, and RECOGNITION is the one
   route no amount of insight can buy.
 
+A player-facing critique of how this actually plays — as opposed to how it is
+built — lives in [`docs/PLAYER_CRITIQUE.md`](docs/PLAYER_CRITIQUE.md). What a
+session should feel like, and a priority list of changes that would buy that
+without a second control scheme, is [`docs/IDEAL_PLAY.md`](docs/IDEAL_PLAY.md).
+
 ## Scopes
 
 Turning Σ is how you travel, and each range of rungs is somewhere different.
