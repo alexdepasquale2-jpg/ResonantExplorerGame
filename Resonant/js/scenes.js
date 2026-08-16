@@ -941,6 +941,55 @@
     return { ok: true, id: bestId, amount: took };
   }
 
+  /* Tap-to-read a world. Strike is the clicker in the attunement field; this
+   * is the clicker on a planet. Paid for attention on a patch, diminished per
+   * world so a seam is not a farm, and stored as two numbers — never a cell
+   * map. A harvester stroke rides the same tap. */
+  const PULSE_COOLDOWN = 0.28;
+
+  function richnessAt(planet, lon, lat) {
+    const local = RS.planet.resourceAt(planet, lon, lat);
+    let best = 0;
+    for (const k in local) if (local[k] > best) best = local[k];
+    return best;
+  }
+
+  function pulse(game, bus) {
+    const s = game.scene;
+    if (!s || s.kind !== 'planet' || !s.planet) return { ok: false, reason: 'no world here' };
+    const now = game.stats.playSeconds || 0;
+    const key = RS.influence.planetKey(s.planet);
+    if (!game.surveys) game.surveys = Object.create(null);
+    const rec = game.surveys[key] || (game.surveys[key] = { work: 0, lastAt: -99 });
+    if (now - rec.lastAt < PULSE_COOLDOWN) return { ok: false, reason: 'cooling' };
+
+    const rich = richnessAt(s.planet, s.lon, s.lat);
+    const first = rec.work === 0;
+    const dim = 1 / (1 + rec.work * 0.12);
+    const gnosisMul = 1 + RS.fractal.totalGnosis(game) * 0.02;
+    let amount = (0.4 + rich * 4.4) * gnosisMul * dim * (game.yieldMul || 1);
+    if (first) amount += 2.8 + (s.planet.habitability || 0) * 8;
+    if (s.planet.extracting) amount += RS.influence.passiveFrom(game, s.planet) * 1.8 * dim;
+
+    rec.work += 1;
+    rec.lastAt = now;
+    game.stats.surveys = (game.stats.surveys || 0) + 1;
+    game.insight += amount;
+
+    let extracted = null;
+    if (game.inhabiting && game.body && RS.vessel.archOf(game.body).extracts) {
+      const ex = extract(game, bus);
+      if (ex.ok) extracted = ex;
+    }
+
+    if (bus && bus.emit) {
+      bus.emit('place:pulse', {
+        amount, rich, first, planet: s.planet, work: rec.work, extracted
+      });
+    }
+    return { ok: true, amount, rich, first, extracted };
+  }
+
   /* Selling converts cargo to Insight at the local market price — which is why
    * a market's prices matter and why hauling somewhere is worth the delta-v. */
   function sell(game, bus) {
@@ -970,7 +1019,7 @@
     TIER_PLANET, TIER_STELLAR, TIER_SYSTEM, TIER_CELL, TIER_QUANTUM, TIER_GROUP, TIER_HUBBLE, TIER_ENSEMBLE, TIER_ATOMIC, TIER_MOLECULAR,
     SCENES, SCENE_BY_ID, sceneForTier, tierForScene, newScene, systemAddrFrom, systemKey, enterSystem, selectBody,
     derivePlanet, mostInteresting, tick, systemPositions, terrainProfile,
-    neighbourhood, cameraMode, cycleCamera, cameraLabel, sampleSurface, embark, disembark, extract, sell, PROFILE_N,
+    neighbourhood, cameraMode, cycleCamera, cameraLabel, sampleSurface, embark, disembark, extract, sell, pulse, richnessAt, PULSE_COOLDOWN, PROFILE_N,
     FREE_W, FREE_H,
     TIER_CLUSTER, civAt, tickContact, wrapDeltaLon
   };

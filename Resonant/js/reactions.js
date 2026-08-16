@@ -404,6 +404,20 @@
         title: 'Extracted ' + RS.core.fmt(amount) + ' ' + (c ? c.name : id) });
     });
 
+    bus.on('place:pulse', ({ amount, first, extracted }) => {
+      RS.audio.click(0.4 + Math.min(0.5, amount / 12), 0.55);
+      RS.feel.buzz('tick');
+      /* Frequent pulses stay a click. The first read of a world is the one
+       * that should name itself — after that, the number in the topbar pops. */
+      if (first && !extracted) {
+        RS.ui.toast({
+          kind: 'info', icon: '◎', hue: 42, ms: 1800,
+          title: 'World read',
+          body: '+' + RS.core.fmt(amount) + ' Ψ from this patch'
+        });
+      }
+    });
+
     bus.on('sell', ({ total, civ }) => {
       RS.audio.purchase();
       RS.feel.FX.crystallise(0, 0, 45, 2, total);
@@ -435,6 +449,15 @@
         kind: 'major', icon: '◈', hue: star.star.cls.hue, ms: 4200,
         title: 'ARRIVED — ' + star.name,
         body: 'Turn Σ inward to enter the system.'
+      });
+    });
+
+    bus.on('galaxy:drift', ({ sx, sy, star }) => {
+      RS.audio.seat(0.35);
+      RS.ui.toast({
+        kind: 'info', icon: '◇', hue: 190, ms: 1400,
+        title: star ? star.name : ('Sector ' + sx + ', ' + sy),
+        body: star ? 'In reach — turn Σ inward to enter.' : 'Vacuum. Keep burning.'
       });
     });
 

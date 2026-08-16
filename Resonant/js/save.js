@@ -70,6 +70,7 @@
       /* Relationships and galactic position. Both are addresses and small
        * numbers — the civilisations and the stars themselves re-derive. */
       contacts: game.contacts,
+      surveys: game.surveys,
       galaxy: { sx: game.galaxy.sx, sy: game.galaxy.sy },
       scene: {
         kind: game.scene.kind,
@@ -144,6 +145,7 @@
     game.deltas = data.deltas || Object.create(null);
     game.senseBonus = data.senseBonus || 0;
     game.contacts = data.contacts || Object.create(null);
+    game.surveys = data.surveys || Object.create(null);
     if (data.galaxy) {
       game.galaxy.sx = data.galaxy.sx || 0;
       game.galaxy.sy = data.galaxy.sy || 0;

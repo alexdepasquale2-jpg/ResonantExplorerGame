@@ -382,6 +382,18 @@
      * it is just not re-run to answer a question whose answer has not moved. */
     ctx.drawImage(globeDisc(game, p, s, R), Math.round(cx - R), Math.round(cy - R));
 
+    /* Specular ocean flash on the day side — one ellipse, not a lighting model. */
+    if (p.hydrosphere > 0.12) {
+      ctx.save();
+      ctx.beginPath(); ctx.arc(cx, cy, R, 0, TAU); ctx.clip();
+      const sg = ctx.createRadialGradient(cx - R * 0.28, cy - R * 0.32, 0, cx - R * 0.28, cy - R * 0.32, R * 0.55);
+      sg.addColorStop(0, 'rgba(255,255,255,' + (0.07 + p.hydrosphere * 0.10) + ')');
+      sg.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = sg;
+      ctx.fillRect(cx - R, cy - R, R * 2, R * 2);
+      ctx.restore();
+    }
+
     /* Terminator, unless tidally locked — in which case the day side is fixed
      * and the night side is permanent, which the shading should show. */
     const tg = ctx.createRadialGradient(cx - R * 0.4, cy - R * 0.3, R * 0.1, cx, cy, R * 1.25);
@@ -393,6 +405,26 @@
     ctx.fillStyle = tg;
     ctx.fillRect(cx - R, cy - R, R * 2, R * 2);
     ctx.restore();
+
+    /* City lights on the night limb. Hashed from the civ, not a stored map. */
+    const civ = p.civ || (s.tGyr != null ? RS.civ.civOf(p, s.tGyr) : null);
+    if (civ && civ.tech > 0.22) {
+      ctx.save();
+      ctx.beginPath(); ctx.arc(cx, cy, R * 0.98, 0, TAU); ctx.clip();
+      const nLights = Math.round(6 + civ.tech * 26);
+      for (let i = 0; i < nLights; i++) {
+        const u = RS.core.hashF(p.hash, 900 + i);
+        const v = RS.core.hashF(p.hash, 1100 + i);
+        const lx = cx - R + u * R * 2;
+        const ly = cy - R + v * R * 2;
+        const dx = lx - cx, dy = ly - cy;
+        if (dx * dx + dy * dy > R * R * 0.92) continue;
+        if (lx < cx - R * 0.02) continue;
+        ctx.fillStyle = hsl(42, 0.92, 0.72, 0.22 + civ.tech * 0.5);
+        ctx.fillRect(lx, ly, 1.5, 1.5);
+      }
+      ctx.restore();
+    }
 
     /* Atmosphere limb — thickness follows real pressure. */
     if (p.pressure > 0.01) {
@@ -551,6 +583,22 @@
       ctx.fillRect(0, 0, w, horizon);
     }
 
+    /* Cloud wisps. Hashed bands, not a cloud map: pressure writes how many,
+     * moisture in the profile writes how opaque. */
+    if (press > 0.18 && day > 0.08) {
+      const nCloud = Math.min(8, Math.round(5 * press));
+      for (let i = 0; i < nCloud; i++) {
+        const u = RS.core.hashF(p.hash, 50 + i);
+        const moist = prof.moist ? prof.moist[Math.min(n - 1, (i * 13) % n)] : 0.4;
+        ctx.fillStyle = hsl(aHue, 0.08, 0.93, (0.06 + press * 0.08) * (0.5 + moist));
+        const x = ((u + (s.t || 0) * 0.0035 * (0.5 + press)) % 1) * w;
+        const y = horizon * (0.12 + RS.core.hashF(p.hash, 61 + i) * 0.38);
+        ctx.beginPath();
+        ctx.ellipse(x, y, 26 + u * 48, 6 + u * 7, 0, 0, TAU);
+        ctx.fill();
+      }
+    }
+
     /* Water, if the local ground is below the live (tide-aware) waterline. */
     if (p.hydrosphere > 0) {
       const wy = horizon + (base - water) * vscale;
@@ -589,6 +637,43 @@
       ctx.fillStyle = tg;
       ctx.fill();
     }
+
+    /* Vegetation, rock and seam glints from the same 96 samples. Extra
+     * geometry, not extra geology — the profile already answered. */
+    for (let i = 0; i < n; i += 2) {
+      const b = prof.biome[i];
+      if (!b) continue;
+      const x = (i / (n - 1)) * w;
+      const y = horizon + (base - prof.elev[i]) * vscale;
+      const hsh = RS.core.hashF(p.hash, 70 + i);
+      if (y > h - 4) continue;
+      if (b.id === 'forest' || b.id === 'jungle' || b.id === 'grass') {
+        const ht = (b.id === 'jungle' ? 13 : b.id === 'forest' ? 9 : 4.5) * (0.55 + hsh);
+        ctx.strokeStyle = hsl(b.hue, 0.55, 0.26, 0.72);
+        ctx.lineWidth = b.id === 'grass' ? 1 : 1.35;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + (hsh - 0.5) * 3.2, y - ht);
+        ctx.stroke();
+      } else if (b.id === 'mountain' || b.id === 'badlands' || b.id === 'crystal') {
+        ctx.fillStyle = hsl(b.hue, b.sat * 0.5, b.lum * 1.15, 0.55);
+        ctx.beginPath();
+        ctx.moveTo(x - 2.2, y);
+        ctx.lineTo(x, y - 3.4 - hsh * 3);
+        ctx.lineTo(x + 2.2, y);
+        ctx.fill();
+      }
+    }
+    ctx.fillStyle = 'rgba(255, 226, 150, 0.78)';
+    for (let i = 4; i < n; i += 8) {
+      if (RS.core.hashF(p.hash, 880 + i) < 0.35) continue;
+      const x = (i / (n - 1)) * w;
+      const y = horizon + (base - prof.elev[i]) * vscale;
+      const tw = 0.4 + 0.6 * Math.abs(Math.sin((s.t || 0) * 2.6 + i));
+      ctx.globalAlpha = tw;
+      ctx.fillRect(x - 1.4, y - 2.2, 2.8, 2.8);
+    }
+    ctx.globalAlpha = 1;
 
     /* Dust / weather particles scaled by pressure. A vacuum has none. */
     if (press > 0.08 && day > 0.15) {
@@ -789,13 +874,25 @@
       g.fillRect(0, 0, w, h);
       for (let iy = 0; iy < FH; iy++) {
         const lat = RS.planet.clampLat(s.lat - (iy / (FH - 1) - 0.5) * spanLat * 2);
+        let prevElev = null;
         for (let ix = 0; ix < FW; ix++) {
           const lon = s.lon + (ix / (FW - 1) - 0.5) * span * 2;
           const b = biomeCached(p, lon, lat, epoch);
           const elev = RS.planet.elevationAt(p, lon, lat);
-          const relief = clamp(0.78 + (elev - dat) * 0.4, 0.5, 1.35);
+          let relief = clamp(0.78 + (elev - dat) * 0.4, 0.5, 1.35);
+          if (prevElev != null) relief = clamp(relief + (elev - prevElev) * 0.55, 0.42, 1.5);
           g.fillStyle = hsl(b.hue, b.sat, clamp01(b.lum * relief), 1);
           g.fillRect(Math.floor(ix * cellW), Math.floor(iy * cellH), Math.ceil(cellW) + 1, Math.ceil(cellH) + 1);
+          const bid = b.id;
+          if (bid === 'mountain' || bid === 'forest' || bid === 'jungle' || bid === 'crystal') {
+            const spark = RS.core.hashF(p.hash, (ix * 31 + iy * 17 + 4) | 0);
+            if (spark > 0.78) {
+              g.fillStyle = bid === 'crystal' ? 'rgba(180,230,255,0.45)' : 'rgba(18,42,28,0.32)';
+              const x = Math.floor(ix * cellW), y = Math.floor(iy * cellH);
+              g.fillRect(x + cellW * 0.3, y + cellH * 0.25, cellW * 0.35, cellH * 0.4);
+            }
+          }
+          prevElev = elev;
         }
       }
       hoodKey = key;

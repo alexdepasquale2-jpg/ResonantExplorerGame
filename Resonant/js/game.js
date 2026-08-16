@@ -72,12 +72,15 @@
       deltas: Object.create(null),
       fields: { consciousness: 0.1, reality: 0.05, beacons: 0, resonators: 0 },
       senseBonus: 0,
+      /* Per-world survey work. Two numbers per planet you have tapped:
+       * diminishing clicker income without a cell map. */
+      surveys: Object.create(null),
 
       strike: RS.strike.newState(),
 
       strikeLevels: Object.create(null),
 
-      stats: { blocksAdopted: 0, farthestBlock: 0, crystals: 0, bestSingle: 0, playSeconds: 0, ticks: 0, systemsSeen: 0, worldsSeen: 0, jumps: 0, contacts: 0 },
+      stats: { blocksAdopted: 0, farthestBlock: 0, crystals: 0, bestSingle: 0, playSeconds: 0, ticks: 0, systemsSeen: 0, worldsSeen: 0, jumps: 0, contacts: 0, surveys: 0 },
 
       /* Transient, rebuilt every frame — never saved. */
       focusNode: null,
@@ -337,11 +340,11 @@
         return { text: 'Life here. Ride a mind with the symbiont — in orbit that is a civilisation — or turn Σ inward to enter a cell.',
           kind: 'explore' };
       }
-      if (p && p.resources && p.resources.length) {
-        return { text: 'Seams below. Extract with the harvester, or build from the world panel.',
+      if (p && p.resources && Object.keys(p.resources).length) {
+        return { text: 'Seams below. Tap the ground to read them, or extract with the harvester.',
           kind: 'explore' };
       }
-      return { text: 'Walk it. Δ steers, φ senses. Tap the scene tag or C to switch SIDE-ON / MAP.', kind: 'pilot' };
+      return { text: 'Walk it. Tap the ground to survey a seam. C or the scene tag switches SIDE-ON / MAP.', kind: 'pilot' };
     }
     return nextObjective(game);
   }
