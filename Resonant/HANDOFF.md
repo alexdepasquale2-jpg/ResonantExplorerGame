@@ -257,12 +257,20 @@ slides, a wider rumour census, cheaper bloom in the attunement field, guide
 copy for riding a culture from orbit, **extractors that actually pay idle Ψ**,
 and a **world pulse** clicker (`game.surveys[planetKey] = { work, lastAt }`).
 
+Player-facing design notes (not architecture): `docs/PLAYER_CRITIQUE.md` is
+a critique of how the game actually plays; `docs/IDEAL_PLAY.md` is the
+session it should feel like and a priority list of changes that buy that
+without new clickers or stored worlds.
+
 What is still worth doing:
 
-1. **Foam remains embark-blocked.** That is the live rule (`Σ` is vertical
+1. **The first lock, the first land, the first conversation.** See
+   `docs/IDEAL_PLAY.md` P0–P4. The simulation is complete; the game is not
+   yet taught in the order a player can feel.
+2. **Foam remains embark-blocked.** That is the live rule (`Σ` is vertical
    while embodied). If a later pass wants a foam-native body, it has to be
    a new medium, not a weakening of `embark`.
-2. **Sample budgets stay fixed.** Do not grow the profile, neighbourhood, or
+3. **Sample budgets stay fixed.** Do not grow the profile, neighbourhood, or
    globe grids with zoom. If a scope feels empty, derive a different question
    of the same samples.
 
