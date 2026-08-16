@@ -288,6 +288,9 @@
     else if (s.kind === 'molecular') RS.molecular.tick(game, bus, dt);
     else if (s.kind === 'shells') RS.shells.tick(game, bus, dt);
 
+    if (game.inhabiting && s.kind === 'web') tickWebPlace(game, dt);
+    if (game.inhabiting && s.kind === 'foam') tickFoamPlace(game, dt);
+
     /* Relays keep channels open from other systems. Runs after the local
      * scene has had a chance to claim `s.contact`, and is a no-op unless
      * a probe or beacon is actually stationed somewhere. */
@@ -513,6 +516,26 @@
     body.y = Math.sin(s.orbitAngle) * rr * 0.62;
   }
 
+  function tickWebPlace(game, dt) {
+    const body = game.body;
+    if (!body || !RS.vessel.archOf(body).web) return;
+    const ctl = RS.vessel.controlsFrom(game);
+    const r = 0.18 + ctl.vert * 0.72;
+    body.heading += ctl.rate * dt * 0.85;
+    body.x = Math.cos(body.heading) * r;
+    body.y = Math.sin(body.heading) * r * 0.62;
+  }
+
+  function tickFoamPlace(game, dt) {
+    const body = game.body;
+    if (!body || RS.vessel.archOf(body).id !== 'flucton') return;
+    const ctl = RS.vessel.controlsFrom(game);
+    const r = 0.12 + ctl.vert * 0.55;
+    body.heading = ctl.heading;
+    body.x = Math.cos(body.heading) * r;
+    body.y = Math.sin(body.heading) * r;
+  }
+
   /* A civilisation with the player's influence applied — uplift, standing,
    * awareness. Same pattern as derivePlanet: derive, then layer deltas. */
   function civAt(game, planet, tGyr) {
@@ -644,7 +667,36 @@
       planetaryElev: r.elev,
       resource: RS.planet.resourceAt(s.planet, s.lon, s.lat)
     };
+    s.underfoot = underfootCard(game, s.surface);
     return s.surface;
+  }
+
+  function underfootCard(game, surf) {
+    const s = game.scene;
+    if (!s || !s.planet || !surf) return null;
+    const prof = terrainProfile(game, 0.048);
+    const mid = (prof.n / 2) | 0;
+    const sea = surf.sea;
+    let shore = null;
+    for (let i = mid + 1; i < prof.n; i++) {
+      if (prof.elev[mid] >= sea && prof.elev[i] < sea) { shore = 'east'; break; }
+    }
+    for (let i = mid - 1; i >= 0; i--) {
+      if (prof.elev[mid] >= sea && prof.elev[i] < sea) {
+        shore = shore === 'east' ? 'both' : 'west';
+        break;
+      }
+    }
+    const mean = (prof.elev[0] + prof.elev[prof.n - 1]) * 0.5;
+    const ridge = prof.elev[mid] > mean + 0.035;
+    const basin = prof.elev[mid] < mean - 0.035;
+    let seam = null, best = 0;
+    const local = surf.resource || {};
+    for (const k in local) if (local[k] > best) { best = local[k]; seam = k; }
+    return {
+      biome: surf.biome, shore, ridge, basin, seam,
+      n: prof.n
+    };
   }
 
   /* The terrain profile under the player: a side-on slice sampled from the
@@ -1065,6 +1117,37 @@
     if (first) amount += 2.8 + (s.planet.habitability || 0) * 8;
     if (s.planet.extracting) amount += RS.influence.passiveFrom(game, s.planet) * 1.8 * dim;
 
+    const arch = game.inhabiting && game.body ? RS.vessel.archOf(game.body) : null;
+    let kind = 'survey';
+    let scan = null;
+    if (arch && arch.reader) {
+      kind = 'scan';
+      let nearest = null, nd = 1e9;
+      for (let i = 0; i < (s.agents || []).length; i++) {
+        const a = s.agents[i];
+        const d = Math.hypot(wrapDeltaLon((a.lon || s.lon) - s.lon), (a.lat || s.lat) - s.lat);
+        if (d < nd) { nd = d; nearest = a; }
+      }
+      if (nearest && nearest.fauna) {
+        scan = { name: nearest.fauna.name || nearest.fauna.id, dist: nd };
+        amount += 0.8 * gnosisMul;
+      } else if (s.planet.civ || (s.tGyr != null && RS.civ.civOf(s.planet, s.tGyr))) {
+        const civ = s.planet.civ || RS.civ.civOf(s.planet, s.tGyr);
+        scan = { name: civ.name, dist: 0 };
+        amount += 1.2 * gnosisMul;
+      }
+    } else if (arch && arch.neural) {
+      kind = 'ride';
+    } else if (arch && arch.id === 'flier') {
+      kind = 'weather';
+      amount += clamp01(s.planet.pressure) * 0.6;
+    } else if (arch && arch.id === 'rover') {
+      kind = 'survey';
+      rec.work = Math.max(0, rec.work - 0.35);
+    } else if (arch && arch.extracts) {
+      kind = 'extract';
+    }
+
     rec.work += 1;
     rec.lastAt = now;
     game.stats.surveys = (game.stats.surveys || 0) + 1;
@@ -1087,10 +1170,11 @@
     if (bus && bus.emit) {
       bus.emit('place:pulse', {
         amount, rich, first, planet: s.planet, work: rec.work, extracted,
-        biome: patch && patch.biome, seam: seamName
+        biome: patch && patch.biome, seam: seamName, kind, scan
       });
     }
-    return { ok: true, amount, rich, first, extracted, biome: patch && patch.biome, seam: seamName };
+    return { ok: true, amount, rich, first, extracted, biome: patch && patch.biome,
+      seam: seamName, kind, scan };
   }
 
   /* Selling converts cargo to Insight at the local market price — which is why
@@ -1122,7 +1206,7 @@
     TIER_PLANET, TIER_STELLAR, TIER_SYSTEM, TIER_CELL, TIER_QUANTUM, TIER_GROUP, TIER_HUBBLE, TIER_ENSEMBLE, TIER_ATOMIC, TIER_MOLECULAR,
     SCENES, SCENE_BY_ID, sceneForTier, tierForScene, newScene, systemAddrFrom, systemKey, enterSystem, selectBody,
     derivePlanet, mostInteresting, tick, systemPositions, terrainProfile,
-    neighbourhood, cameraMode, cycleCamera, cameraLabel, sampleSurface, embark, disembark, extract, sell, pulse, richnessAt, PULSE_COOLDOWN, PROFILE_N,
+    neighbourhood, cameraMode, cycleCamera, cameraLabel, sampleSurface, underfootCard, embark, disembark, extract, sell, pulse, richnessAt, PULSE_COOLDOWN, PROFILE_N,
     FREE_W, FREE_H, nearestStandable, preferLandPose,
     TIER_CLUSTER, civAt, tickContact, wrapDeltaLon
   };

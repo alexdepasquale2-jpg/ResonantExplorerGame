@@ -333,7 +333,11 @@
       setText('layer-name', band.name.toUpperCase() + (ghost ? ' · GHOST' : ''));
       setText('layer-rules', ghost
         ? 'Beyond your focus. Visible, not holdable. Buy φ FOCUS to make it cohere.'
-        : band.rules);
+        : (function () {
+            const opts = RS.spectrum.optionsOf ? RS.spectrum.optionsOf(band) : [];
+            const names = opts.map(o => o.label).join(' · ');
+            return names ? band.rules + ' Options: ' + names + '.' : band.rules;
+          })());
       el['layer-name'].style.color = hsl(band.hue, ghost ? 0.15 : band.sat, 0.72);
     }
 
@@ -441,6 +445,11 @@
           '" title="wear — change body before this reaches 100%">strain ' +
           Math.round(st.strain * 100) + '%</span>' : '') +
       (st.holdMass > 0 ? '<span class="bb-tag">' + fmt(st.holdMass) + 'u</span>' : '') +
+      (game.scene && game.scene.kind === 'planet' && game.scene.surface && game.scene.surface.biome
+        ? '<span class="bb-tag" title="underfoot">' + game.scene.surface.biome.name +
+          (game.scene.underfoot && game.scene.underfoot.ridge ? ' · ridge' : '') +
+          (game.scene.underfoot && game.scene.underfoot.shore ? ' · shore ' + game.scene.underfoot.shore : '') +
+          '</span>' : '') +
       (st.possession != null ? '<span class="bb-tag" style="color:#f0abfc" ' +
         'title="how much of this ' + (st.ridingCiv ? 'culture' : 'mind') + ' is you">' +
         (st.possession * 100).toFixed(0) + '% you</span>' : '') +

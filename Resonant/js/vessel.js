@@ -481,7 +481,7 @@
      * surface each archetype expresses those differently — walker steps,
      * rover coasts, flier banks. */
     const powered = body.charge > 0.5 ? 1 : 0.15;
-    const accel = arch.thrust / arch.mass * authority * powered;
+    const accel = arch.thrust / effectiveMass(body) * authority * powered;
     const onPlanetSurface = env.medium === MEDIUM.SURFACE && game.scene && game.scene.kind === 'planet';
     let ax, ay, az = 0;
 
@@ -623,6 +623,8 @@
     let dragRate = arch.dragC * density * 0.35;
     if (env.biomeId === 'desert' || env.biomeId === 'dunes') dragRate *= 1.45;
     if (env.biomeId === 'shallows') dragRate *= 1.2;
+    if (env.biomeId === 'crystal') dragRate *= 0.7;
+    if (env.biomeId === 'lava') dragRate *= 1.8;
 
     body.vx += ax * dt;
     body.vy += ay * dt;
@@ -662,7 +664,8 @@
      * next to a bright star you are not. */
     const exertion = tmag * arch.draw * (1 + env.gravity * 0.5);
     const hostility = (env.temperature > 340 || env.temperature < 180 ? 0.35 : 0) +
-      (env.pressure > 8 ? 0.3 : 0);
+      (env.pressure > 8 ? 0.3 : 0) +
+      (env.biomeId === 'lava' ? 0.55 : 0);
     body.charge -= (exertion + hostility * arch.draw * 0.5) * dt;
     body.charge += arch.regen * clamp01(0.25 + env.flux * 0.4) * dt;
     body.charge = clamp(body.charge, 0, arch.capacity);

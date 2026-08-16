@@ -31,7 +31,7 @@ That one decision is why a 22-rung ladder of scopes costs almost nothing, why
 saves are ~2 kB, and why an alternative-physics universe is possible at all.
 
 ```bash
-node tools/simtest.js      # 2000 assertions — must be green before you commit
+node tools/simtest.js      # 2023 assertions — must be green before you commit
 node tools/build.mjs       # emits dist/resonant.html, one self-contained file
 python3 -m http.server 8000   # then open /Resonant/index.html
 ```
@@ -85,7 +85,8 @@ While on a planet the picture is always the **globe** (baked 96×48 biome table)
 Observing scrubs time and shows the landing reticle. Inhabiting pins you on the
 near side of the same disc: a 96-sample underfoot apron, vessel silhouette, and
 agents projected on the sphere. **Σ frames height of attention** (zoom and apron
-strength) — it does not swap cameras. Tap the ground is still survey/pulse.
+strength) — it does not swap cameras. Tap the ground is still survey/pulse; the *question* depends on the body
+(walker surveys, probe scans, harvester extracts, flier sounds weather).
 
 Pose is `(scene.lon, scene.lat, scene.altitude)`. Agents live in lon/lat.
 Saves still persist only those numbers. Debug HUD can teleport and dump the
@@ -98,13 +99,14 @@ stays embark-blocked.
 
 ### 2.3 The test suite is the specification
 
-`tools/simtest.js` is 2000 assertions and about half the value of this
+`tools/simtest.js` is 2023 assertions and about half the value of this
 repository. It runs headless in Node against the real modules (including
 `ui.js`, `audio.js` — the HTML builders are pure string functions).
 
 It does not test that code runs. It tests **claims**:
 
-- Every band is winnable and measurably distinct.
+- Every band is winnable and measurably distinct, with at least two named
+  play options (compositions of primitives — never a minigame).
 - Every rung resolves to a scope; no gaps; none absorbed by an unrelated scope.
 - The economy: every layer out-earns the one you came up through.
 - `Cascade` branches identically in fifty alternative universes.
@@ -249,8 +251,10 @@ generative loop expansion have landed: firsts, then campaigns. Gnosis
 earns attunements (foresight ghosts, hunt destinations, a lattice in the
 codex). Sparse marks exist at planet, star, and filament. The flucton is
 the foam-native body (`MEDIUM.FOAM`); walkers still cannot embark there.
-A late **new seed** keeps understanding and resets places. Hold stays
-the game.
+A late **new seed** keeps understanding and resets places. Each spectrum
+layer now names at least two play options (compositions of the six
+primitives — Thermal gates, Causal drifts). Pulse asks a different
+question per vessel. Hold stays the game.
 
 What is still worth doing:
 
@@ -280,7 +284,7 @@ What is still worth doing:
 ## 9. Verification checklist before you push
 
 ```bash
-node tools/simtest.js     # 2000 assertions, zero failures
+node tools/simtest.js     # 2023 assertions, zero failures
 node tools/build.mjs      # single file still builds
 ```
 
