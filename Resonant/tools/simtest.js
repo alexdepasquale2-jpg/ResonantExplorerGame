@@ -876,6 +876,30 @@ function busCollecting(store) {
     const survey = RS.planet.survey(a, 120);
     assert(survey.biomes.length > 0 && survey.landFraction >= 0 && survey.landFraction <= 1,
       'a surface survey returns sane fractions');
+
+    /* Detail must not seam at the antimeridian either — walkers cross it. */
+    const dSeamA = RS.planet.elevationDetailAt(a, Math.PI - 1e-7, 0.2);
+    const dSeamB = RS.planet.elevationDetailAt(a, -Math.PI + 1e-7, 0.2);
+    assert(Math.abs(dSeamA - dSeamB) < 1e-3, 'surface detail does not seam at the antimeridian');
+
+    /* Detail never flips land/sea against the planetary field. */
+    let flipped = 0, checked = 0;
+    const seaA = RS.planet.seaLevel(a);
+    if (a.hydrosphere > 0) {
+      for (let k = 0; k < 80; k++) {
+        const lon = (k * 0.41) % (Math.PI * 2), lat = ((k * 0.17) % 2 - 1) * 1.1;
+        const base = RS.planet.elevationAt(a, lon, lat);
+        const det = RS.planet.elevationDetailAt(a, lon, lat);
+        checked++;
+        if ((base >= seaA) !== (det >= seaA) && Math.abs(det - seaA) > 1e-6) flipped++;
+      }
+      assert(flipped === 0, 'surface detail never flips coastline vs planetary elev (' + flipped + '/' + checked + ')');
+    }
+
+    const res1 = RS.planet.resourceAt(a, 0.4, 0.1);
+    const res2 = RS.planet.resourceAt(a, 0.4, 0.1);
+    assert(Object.keys(res1).length > 0 && res1.metals === res2.metals,
+      'resourceAt is deterministic at a patch');
   }
 
   /* Tidal locking must actually occur for close-in worlds. */
@@ -4088,6 +4112,191 @@ const posOut = { x: 0, y: 0, z: 0, r: 0 };
     'debug unlocks round-trip through save (bands)');
   assert(RS.strike.UPGRADES.every(u => RS.strike.levelOf(round, u.id) === u.max),
     'debug unlocks round-trip through save (strike)');
+}
+
+// ── vessel open-world: geology, dual cameras, other scopes ───────────────
+{
+  /* Find a world with moons so tide phase is actually a function of period. */
+  let moonWorld = null;
+  for (let i = 0; i < 80 && !moonWorld; i++) {
+    const sys = RS.stellar.systemAt(91, i, 1, 0);
+    for (let j = 0; j < sys.bodies.length; j++) {
+      if (sys.bodies[j].kind !== 'planet') continue;
+      const p = RS.planet.planetAt(sys, j);
+      if (p && p.moons && p.moons.list && p.moons.list.length && p.moons.list[0].period) {
+        moonWorld = p; break;
+      }
+    }
+  }
+  assert(!!moonWorld, 'some world has Keplerian moons');
+  if (moonWorld) {
+    const m = moonWorld.moons.list[0];
+    const want = RS.orbital.period(m.a, moonWorld.massE / RS.stellar.EARTH_MASSES_PER_SOLAR);
+    near(m.period, want, 1e-12, 'moon period is Keplerian');
+    const t0 = RS.localtime.tideAt(moonWorld, 0);
+    const tQ = RS.localtime.tideAt(moonWorld, m.period * 0.25);
+    assert(Math.abs(((tQ.phase - t0.phase) % (Math.PI * 2))) > 0.2 || t0.height === 0,
+      'tide phase moves with moon period');
+    const w0 = RS.localtime.waterlineAt(moonWorld, 0, 0);
+    const wL = RS.localtime.waterlineAt(moonWorld, Math.PI, 0);
+    if (moonWorld.hydrosphere > 0 && t0.height > 0) {
+      assert(Math.abs(w0 - wL) > 1e-6, 'waterline varies with longitude (the tidal bulge)');
+    }
+    assert(w0 === RS.localtime.waterlineAt(moonWorld, 0, 0), 'waterline is deterministic');
+  }
+
+  /* Seasonal nudge: a tilted world at northern summer is warmer at +lat. */
+  let tilted = null;
+  for (let i = 0; i < 60 && !tilted; i++) {
+    const sys = RS.stellar.systemAt(44, i, 0, 0);
+    for (let j = 0; j < sys.bodies.length; j++) {
+      if (sys.bodies[j].kind !== 'planet') continue;
+      const p = RS.planet.planetAt(sys, j);
+      if (p && p.axialTilt > 0.2 && !p.tidallyLocked) { tilted = p; break; }
+    }
+  }
+  if (tilted) {
+    const elev = RS.planet.elevationAt(tilted, 0, 0.9);
+    const Tmean = RS.planet.temperatureAt(tilted, 0, 0.9, elev);
+    const Tsum = RS.planet.temperatureAt(tilted, 0, 0.9, elev, 0.25);
+    const Twin = RS.planet.temperatureAt(tilted, 0, 0.9, elev, 0.75);
+    assert(Tsum !== Twin, 'seasonal epoch changes polar temperature');
+    assert(Number.isFinite(Tmean) && Number.isFinite(Tsum), 'seasonal temperature stays finite');
+  }
+
+  const g = RS.game.newGame(601);
+  g.vessels.unlocked.walker = true;
+  g.vessels.unlocked.courier = true;
+  g.vessels.unlocked.ciliate = true;
+  g.scene.systemAddr = { sx: 2, sy: 2, index: 1 };
+  g.scene.system = RS.stellar.systemAt(g.seed, 2, 2, 1);
+  const pIdx = g.scene.system.bodies.findIndex(b => b.kind === 'planet');
+  assert(pIdx >= 0, 'test system has a planet');
+  RS.scenes.selectBody(g, nullBus, pIdx);
+  g.scene.kind = 'planet';
+  g.scene.lon = 0.3; g.scene.lat = 0.1;
+  RS.scenes.sampleSurface(g);
+
+  const prof = RS.scenes.terrainProfile(g, 0.09);
+  assert(prof.elev && prof.biome && prof.n === RS.scenes.PROFILE_N,
+    'terrainProfile returns elev + biome arrays');
+  assert(prof.biome[0] && prof.biome[0].id, 'profile samples have biome identities');
+  let biomeVariety = 0;
+  const seen = Object.create(null);
+  for (let i = 0; i < prof.n; i++) {
+    if (prof.biome[i]) seen[prof.biome[i].id] = 1;
+  }
+  biomeVariety = Object.keys(seen).length;
+  assert(biomeVariety >= 1, 'profile has at least one biome');
+
+  g.body = RS.vessel.newBody('walker');
+  g.inhabiting = true;
+  g.scene.altitude = 0;
+  g.scene.forceCam = null;
+  assert(RS.scenes.cameraMode(g) === 'sideon', 'near-ground inhabiting uses side-on');
+  g.scene.altitude = 0.4;
+  assert(RS.scenes.cameraMode(g) === 'freeroam', 'altitude above threshold uses freeroam');
+  g.scene.forceCam = 'sideon';
+  assert(RS.scenes.cameraMode(g) === 'sideon', 'forceCam overrides altitude');
+  g.scene.forceCam = null;
+  g.inhabiting = false;
+  assert(RS.scenes.cameraMode(g) === 'globe', 'observing uses the globe');
+
+  /* Lon/lat freeroam: heading north changes lat, crossing antimeridian wraps. */
+  g.inhabiting = true;
+  g.body = RS.vessel.newBody('walker');
+  g.body.vx = 0; g.body.vz = 4; g.body.vy = 0;
+  g.scene.lon = 0; g.scene.lat = 0.2;
+  const latBefore = g.scene.lat;
+  RS.scenes.tick(g, nullBus, 0.25);
+  assert(g.scene.lat !== latBefore, 'embodied motion changes latitude');
+  g.scene.lon = Math.PI - 0.01; g.body.vx = 8; g.body.vz = 0;
+  RS.scenes.tick(g, nullBus, 0.5);
+  assert(g.scene.lon >= 0 && g.scene.lon < Math.PI * 2, 'lon stays wrapped after antimeridian');
+  g.scene.lat = Math.PI / 2 - 0.03; g.body.vz = 12; g.body.vx = 0;
+  RS.scenes.tick(g, nullBus, 0.4);
+  assert(g.scene.lat < Math.PI / 2, 'latitude clamps at the pole');
+  assert(Number.isFinite(g.scene.lat) && Number.isFinite(g.scene.lon), 'pose stays finite at the pole');
+
+  /* Mode switch does not teleport. */
+  const lonHold = g.scene.lon, latHold = g.scene.lat;
+  g.scene.forceCam = 'freeroam';
+  RS.scenes.tick(g, nullBus, 0);
+  g.scene.forceCam = 'sideon';
+  RS.scenes.tick(g, nullBus, 0);
+  near(g.scene.lon, lonHold, 1e-9, 'camera switch keeps longitude');
+  near(g.scene.lat, latHold, 1e-9, 'camera switch keeps latitude');
+
+  /* Save still only persists lon/lat/t, not a heightmap. */
+  const serial = RS.save.serialise(g);
+  assert(serial.scene.lon != null && serial.scene.lat != null, 'save stores lon/lat');
+  assert(!serial.scene.profile && !serial.heightmap && !serial.scene.__profile,
+    'save does not store a heightmap or profile');
+  const packed = JSON.stringify(serial);
+  assert(packed.length < 20000, 'open-world pose does not bloat the save (' + packed.length + ' B)');
+
+  /* Cellular: embark, couple, no NaNs, disembark. */
+  RS.scenes.disembark(g, nullBus);
+  let live = g.scene.planet && !RS.cellular.reasonSterile(g.scene.planet) ? g.scene.planet : null;
+  if (!live) {
+    for (let i = 0; i < 40 && !live; i++) {
+      const sys = RS.stellar.systemAt(g.seed, i, 0, 0);
+      for (let j = 0; j < sys.bodies.length; j++) {
+        if (sys.bodies[j].kind !== 'planet') continue;
+        const p = RS.planet.planetAt(sys, j);
+        if (p && !RS.cellular.reasonSterile(p)) { live = p; g.scene.system = sys; g.scene.planet = p; break; }
+      }
+    }
+  }
+  g.scene.kind = 'cellular';
+  if (live) {
+    g.scene.planet = live;
+    RS.cellular.enter(g, nullBus);
+    g.body = RS.vessel.newBody('ciliate');
+    g.inhabiting = true;
+    g.body.x = 0.4; g.body.y = 0.4; g.body.vx = 2; g.body.vy = -1.5;
+    for (let i = 0; i < 40; i++) RS.scenes.tick(g, nullBus, 1 / 60);
+    assert(Number.isFinite(g.body.x) && Number.isFinite(g.body.y), 'cytoplasm pose stays finite');
+    assert(Math.hypot(g.body.x, g.body.y) <= 0.93 + 1e-3, 'cytoplasm confines to the membrane');
+    RS.scenes.disembark(g, nullBus);
+    assert(!g.inhabiting, 'cellular disembark round-trips');
+  } else {
+    assert(true, 'no living world in sample — cytoplasm coupling skipped');
+  }
+
+  /* System orbit: courier Σ sets radius. */
+  g.scene.kind = 'system';
+  g.body = RS.vessel.newBody('courier');
+  g.inhabiting = true;
+  /* A fresh dial has min === max, so vert would be stuck. Open the reach. */
+  g.dials.space.min = 0;
+  g.dials.space.max = 1;
+  RS.dials.setValue(g, g.dials.space, 0.2);
+  RS.scenes.tick(g, nullBus, 1 / 30);
+  const rLow = g.scene.radius;
+  RS.dials.setValue(g, g.dials.space, 0.85);
+  RS.scenes.tick(g, nullBus, 1 / 30);
+  const rHigh = g.scene.radius;
+  assert(rHigh > rLow, 'courier Σ opens orbital radius (' + rLow + ' → ' + rHigh + ')');
+  assert(Number.isFinite(g.body.x) && Number.isFinite(g.body.y), 'system pose stays finite');
+  RS.scenes.disembark(g, nullBus);
+
+  /* Confine helper on remaining scopes. */
+  g.body = RS.vessel.newBody('probe');
+  g.inhabiting = true;
+  g.body.x = 2; g.body.y = 2;
+  RS.vessel.confine(g.body, 0.95);
+  assert(Math.hypot(g.body.x, g.body.y) <= 0.951, 'confine pulls a body back into the disc');
+
+  const dumped = RS.debug.dumpUnderfoot(g);
+  /* dumpUnderfoot needs a planet scene. */
+  g.scene.kind = 'planet';
+  const dumped2 = RS.debug.dumpUnderfoot(g);
+  assert(dumped2.ok && dumped2.dump.indexOf('biome') >= 0, 'debug dump underfoot names the biome');
+  const tel = RS.debug.teleport(g, '0,45');
+  assert(tel.ok && Math.abs(g.scene.lat - 45 * Math.PI / 180) < 1e-6, 'debug teleport sets latitude');
+  const cam = RS.debug.setCam(g, 'freeroam');
+  assert(cam.ok && g.scene.forceCam === 'freeroam', 'debug force camera mode');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

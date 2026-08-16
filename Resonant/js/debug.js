@@ -212,6 +212,45 @@
     return { ok: true, json };
   }
 
+  function dumpUnderfoot(game) {
+    const s = game.scene;
+    if (!s || !s.planet) return { ok: false, reason: 'not on a planet' };
+    RS.scenes.sampleSurface(game);
+    const su = s.surface;
+    const line = (s.planet.name || 'world') +
+      ' lon ' + (s.lon * 57.3).toFixed(2) +
+      ' lat ' + (s.lat * 57.3).toFixed(2) +
+      ' elev ' + (su ? su.elev.toFixed(3) : '?') +
+      ' biome ' + (su && su.biome ? su.biome.id : '?') +
+      ' cam ' + RS.scenes.cameraMode(game);
+    return { ok: true, json: line, dump: line };
+  }
+
+  function teleport(game, lonLat) {
+    const s = game.scene;
+    if (!s || s.kind !== 'planet') return { ok: false, reason: 'not on a planet' };
+    const parts = String(lonLat || '0,0').split(',');
+    const lonDeg = parseFloat(parts[0]), latDeg = parseFloat(parts[1]);
+    if (!Number.isFinite(lonDeg) || !Number.isFinite(latDeg)) {
+      return { ok: false, reason: 'lon,lat degrees' };
+    }
+    s.lon = RS.planet.wrapLon(lonDeg * Math.PI / 180);
+    s.lat = RS.planet.clampLat(latDeg * Math.PI / 180);
+    RS.scenes.sampleSurface(game);
+    return { ok: true, lon: s.lon, lat: s.lat };
+  }
+
+  function setCam(game, mode) {
+    const s = game.scene;
+    if (!s) return { ok: false, reason: 'no scene' };
+    if (mode === 'auto') { s.forceCam = null; return { ok: true, forceCam: null }; }
+    if (mode !== 'freeroam' && mode !== 'sideon' && mode !== 'globe') {
+      return { ok: false, reason: 'unknown camera' };
+    }
+    s.forceCam = mode;
+    return { ok: true, forceCam: mode };
+  }
+
   const ACTIONS = {
     'insight-1k': (g) => grantInsight(g, 1000),
     'insight-100k': (g) => grantInsight(g, 100000),
@@ -230,13 +269,16 @@
     'preset-endgame': (g, b) => presetEndgame(g, b),
     'save-now': (g) => forceSave(g),
     'save-wipe': () => wipeSave(),
-    'save-dump': (g) => dumpSave(g)
+    'save-dump': (g) => dumpSave(g),
+    'dump-underfoot': (g) => dumpUnderfoot(g)
   };
 
   function run(game, bus, action, arg) {
     if (!game) return { ok: false, reason: 'no game' };
     if (action === 'jump') return jumpScene(game, bus, arg);
     if (action === 'phi') return snapPhi(game, arg);
+    if (action === 'teleport') return teleport(game, arg);
+    if (action === 'cam') return setCam(game, arg);
     const fn = ACTIONS[action];
     if (!fn) return { ok: false, reason: 'unknown action' };
     return fn(game, bus);
@@ -304,6 +346,18 @@
       btn('save-dump', 'Dump JSON') +
       '</div></section>';
 
+    h += '<section><h4>Planet</h4><div class="dbg-row">' +
+      btn('teleport', 'Eq 0,0', '0,0') +
+      btn('teleport', 'N pole', '0,88') +
+      btn('teleport', 'S pole', '0,-88') +
+      btn('teleport', 'Antimeridian', '179,10') +
+      btn('cam', 'Side-on', 'sideon') +
+      btn('cam', 'Freeroam', 'freeroam') +
+      btn('cam', 'Globe', 'globe') +
+      btn('cam', 'Cam auto', 'auto') +
+      btn('dump-underfoot', 'Dump underfoot') +
+      '</div></section>';
+
     h += '<p class="dbg-hint">Toggle with <kbd>`</kbd> · gated (localhost / ?debug=1 / localStorage)</p>';
     return h;
   }
@@ -311,6 +365,6 @@
   RS.debug = {
     enabled, run, panelHTML, statusLine, SCENE_JUMPS,
     grantInsight, maxDials, maxStrike, unlockAll, unlockAllResearch,
-    jumpScene, snapPhi, ensureReach
+    jumpScene, snapPhi, ensureReach, teleport, setCam, dumpUnderfoot
   };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));

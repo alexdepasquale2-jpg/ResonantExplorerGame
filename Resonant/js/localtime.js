@@ -121,10 +121,13 @@
      * partially cancel — the difference between a spring and a neap tide, which
      * is a real thing a player standing on a beach could notice. */
     let vx = 0, vy = 0;
+    const planetMassSolar = p.massE / RS.stellar.EARTH_MASSES_PER_SOLAR;
     for (let i = 0; i < moons.length; i++) {
       const m = moons[i];
-      const per = Math.max(0.02, m.period || 1);
-      const ang = (epochYears * 365.25 / per) * TAU;
+      /* Period is years (Kepler). Used to treat a missing period as 1 and then
+       * multiply by 365.25, which made every moon a one-day clock. */
+      const per = Math.max(1e-6, m.period || RS.orbital.period(m.a || 0.002, planetMassSolar));
+      const ang = (epochYears / per) * TAU;
       const pull = (m.massE || 0.01) / Math.pow(Math.max(0.001, m.a || 0.002), 3) * 1e-9;
       sum += pull;
       if (pull > maxOne) maxOne = pull;
@@ -140,6 +143,16 @@
     o.spring = o.alignment > 0.82 && moons.length > 1;
     o.phase = Math.atan2(vy, vx);
     return o;
+  }
+
+  /* Instantaneous waterline at a longitude. Draw and collision sample only —
+   * hydrosphere and `seaLevel` stay the derived constants they always were. */
+  function waterlineAt(p, lon, epochYears) {
+    const sea = RS.planet.seaLevel(p);
+    if (p.hydrosphere <= 0) return sea;
+    const tide = tideAt(p, epochYears || 0);
+    /* k is small so a spring tide wets the beach without drowning a continent. */
+    return sea + 0.055 * tide.height * Math.cos((tide.phase || 0) + lon);
   }
 
   /* Everything at once, for the readout and the renderer. One call per frame. */
@@ -176,5 +189,5 @@
     return bits.join(' · ');
   }
 
-  RS.localtime = { HOURS_PER_YEAR, sunAt, seasonOf, tideAt, stateFor, describe };
+  RS.localtime = { HOURS_PER_YEAR, sunAt, seasonOf, tideAt, waterlineAt, stateFor, describe };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));

@@ -143,6 +143,15 @@
       if (e.body.kind === 'belt') { drawBelt(ctx, s, e, scr); continue; }
       drawWorld(ctx, game, s, e, scr, t);
     }
+
+    /* Embodied courier / lander sits on the orbital plane at the Σ radius. */
+    if (game.inhabiting && game.body) {
+      const rr = s.radius != null ? radiusMap(s, s.radius) : 0.5;
+      const ang = s.orbitAngle || 0;
+      const X = cx + Math.cos(ang) * px(rr);
+      const Y = cy + Math.sin(ang) * px(rr) * 0.62;
+      drawVesselGlyph(ctx, game, X, Y);
+    }
   }
 
   function bodyScreen(scene, e) {
@@ -250,8 +259,9 @@
     const s = game.scene;
     const p = s.planet;
     if (!p) return;
-    const high = s.altitude > 0.35 || !game.inhabiting;
-    if (high) drawGlobe(ctx, game, p, s);
+    const mode = RS.scenes.cameraMode(game);
+    if (mode === 'globe') drawGlobe(ctx, game, p, s);
+    else if (mode === 'freeroam') drawFreeroam(ctx, game, p, s);
     else drawSurface(ctx, game, p, s);
   }
 
@@ -438,7 +448,6 @@
   function drawSurface(ctx, game, p, s) {
     const w = V().w, h = V().h;
     const horizon = V().cy + px(0.35);
-    const sea = RS.planet.seaLevel(p);
     const surf = s.surface || {};
 
     // ── sky ──
@@ -528,34 +537,70 @@
      * uses — mixing the two fields here would float the body above the hill it
      * is standing on. */
     const base = RS.planet.elevationDetailAt(p, s.lon, s.lat);
+    const water = (surf.sea != null) ? surf.sea : RS.localtime.waterlineAt(p, s.lon, s.t || 0);
 
-    /* Water, if the local ground is below sea level. */
+    /* Far/near parallax bands — same heightfield, wider then tighter span, so
+     * the horizon has depth without a second mesh. */
+    const far = RS.scenes.terrainProfile(game, span * 2.2, profileBuf(s, '__profileFar'));
+    drawSilhouette(ctx, far, n, w, h, horizon, base, vscale * 0.42, 0.28, p, s, true);
+
+    // ── weather veil ──
+    const press = clamp01(p.pressure / 2.4);
+    if (press > 0.04) {
+      ctx.fillStyle = hsl(aHue, 0.25, 0.55, press * (0.04 + (1 - day) * 0.08));
+      ctx.fillRect(0, 0, w, horizon);
+    }
+
+    /* Water, if the local ground is below the live (tide-aware) waterline. */
     if (p.hydrosphere > 0) {
-      const wy = horizon + (base - sea) * vscale;
+      const wy = horizon + (base - water) * vscale;
       if (wy < h) {
         const wg = ctx.createLinearGradient(0, wy, 0, h);
         wg.addColorStop(0, hsl(200, 0.6, 0.34, 0.85));
         wg.addColorStop(1, hsl(210, 0.7, 0.14, 0.95));
         ctx.fillStyle = wg;
         ctx.fillRect(0, wy, w, h - wy);
+        /* Splash at the tide line — denser when the tide is running. */
+        const tideH = s.clock && s.clock.tide ? s.clock.tide.height : 0;
+        if (tideH > 0.04) {
+          ctx.fillStyle = hsl(195, 0.45, 0.85, 0.18 + tideH * 0.35);
+          for (let i = 0; i < 18; i++) {
+            const sx0 = RS.core.hashF(p.hash, 90 + i) * w;
+            const bob = Math.sin((s.t || 0) * 40 + i) * 3;
+            ctx.fillRect(sx0, wy - 2 + bob, 3, 3);
+          }
+        }
       }
     }
 
-    ctx.beginPath();
-    ctx.moveTo(0, h);
-    for (let i = 0; i < n; i++) {
-      const x = (i / (n - 1)) * w;
-      const y = horizon + (base - prof[i]) * vscale;
-      ctx.lineTo(x, y);
+    /* Multi-biome land: one trapezoid per profile sample, 96 fills, fixed. */
+    for (let i = 0; i < n - 1; i++) {
+      const x0 = (i / (n - 1)) * w;
+      const x1 = ((i + 1) / (n - 1)) * w;
+      const y0 = horizon + (base - prof.elev[i]) * vscale;
+      const y1 = horizon + (base - prof.elev[i + 1]) * vscale;
+      const b = prof.biome[i] || surf.biome || RS.planet.BIOME_BY_ID.regolith;
+      ctx.beginPath();
+      ctx.moveTo(x0, h); ctx.lineTo(x0, y0); ctx.lineTo(x1, y1); ctx.lineTo(x1, h);
+      ctx.closePath();
+      const tg = ctx.createLinearGradient(0, Math.min(y0, y1) - px(0.05), 0, h);
+      tg.addColorStop(0, hsl(b.hue, b.sat, b.lum * 1.15, 1));
+      tg.addColorStop(1, hsl(b.hue - 8, b.sat * 0.8, b.lum * 0.4, 1));
+      ctx.fillStyle = tg;
+      ctx.fill();
     }
-    ctx.lineTo(w, h);
-    ctx.closePath();
-    const b = surf.biome || RS.planet.BIOME_BY_ID.regolith;
-    const tg = ctx.createLinearGradient(0, horizon - px(0.2), 0, h);
-    tg.addColorStop(0, hsl(b.hue, b.sat, b.lum * 1.15, 1));
-    tg.addColorStop(1, hsl(b.hue - 8, b.sat * 0.8, b.lum * 0.4, 1));
-    ctx.fillStyle = tg;
-    ctx.fill();
+
+    /* Dust / weather particles scaled by pressure. A vacuum has none. */
+    if (press > 0.08 && day > 0.15) {
+      const nDust = Math.round(22 * press);
+      ctx.fillStyle = hsl(38, 0.25, 0.7, 0.18 * press);
+      for (let i = 0; i < nDust; i++) {
+        const u = RS.core.hashF(p.hash, 200 + i);
+        const x = ((u + (s.t || 0) * 0.015 * (0.4 + press)) % 1) * w;
+        const y = horizon * (0.3 + RS.core.hashF(p.hash, 400 + i) * 0.7);
+        ctx.fillRect(x, y, 1.6, 1.6);
+      }
+    }
 
     /* A rim light along the horizon line reads as atmosphere scattering and
      * separates ground from sky far better than a hard edge. */
@@ -564,23 +609,48 @@
     ctx.beginPath();
     for (let i = 0; i < n; i++) {
       const x = (i / (n - 1)) * w;
-      const y = horizon + (base - prof[i]) * vscale;
+      const y = horizon + (base - prof.elev[i]) * vscale;
       i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
     }
     ctx.stroke();
 
     // ── agents ──
-    for (const a of s.agents) drawAgent(ctx, game, a, horizon, vscale, base, prof, n, w);
+    for (const a of s.agents) drawAgent(ctx, game, a, horizon, vscale, base, prof.elev, n, w);
 
     // ── the player's body ──
     drawBody(ctx, game, horizon, vscale, base, w);
+  }
+
+  function profileBuf(s, key) {
+    return s[key] || (s[key] = {
+      elev: new Float32Array(RS.scenes.PROFILE_N),
+      moist: new Float32Array(RS.scenes.PROFILE_N),
+      biome: new Array(RS.scenes.PROFILE_N),
+      n: RS.scenes.PROFILE_N
+    });
+  }
+
+  function drawSilhouette(ctx, prof, n, w, h, horizon, base, vscale, alpha, p, s, far) {
+    ctx.beginPath();
+    ctx.moveTo(0, h);
+    for (let i = 0; i < n; i++) {
+      const x = (i / (n - 1)) * w;
+      const y = horizon + (base - prof.elev[i]) * vscale + (far ? px(0.08) : 0);
+      ctx.lineTo(x, y);
+    }
+    ctx.lineTo(w, h);
+    ctx.closePath();
+    const b = (s.surface && s.surface.biome) || RS.planet.BIOME_BY_ID.regolith;
+    ctx.fillStyle = hsl(b.hue, b.sat * 0.7, b.lum * 0.55, alpha);
+    ctx.fill();
   }
 
   function groundAt(prof, n, w, screenX) {
     const u = clamp01(screenX / w);
     const fi = u * (n - 1);
     const i0 = Math.floor(fi), i1 = Math.min(n - 1, i0 + 1);
-    return lerp(prof[i0], prof[i1], fi - i0);
+    const elev = prof.elev || prof;
+    return lerp(elev[i0], elev[i1], fi - i0);
   }
 
   function drawAgent(ctx, game, a, horizon, vscale, base, prof, n, w) {
@@ -669,14 +739,101 @@
 
   function drawBody(ctx, game, horizon, vscale, base, w) {
     const body = game.body;
+    const X = w * 0.5;
+    const Y = horizon + body.y * vscale * 0.35;
+    drawVesselGlyph(ctx, game, X, Y);
+  }
+
+  /* ── Freeroam neighbourhood ───────────────────────────────────────────────
+   *
+   * A player-centred disc of biome-coloured samples. Fixed 48×32 budget, not
+   * a mesh. Zoom opens with altitude / Σ so climbing shows more of the sphere
+   * without sampling more cells. */
+  const biomeColCache = new Map();
+  const BIOME_COL_MAX = 2400;
+
+  function biomeCached(p, lon, lat, epoch) {
+    const lonBin = Math.floor(RS.planet.wrapLon(lon) / TAU * 192);
+    const latBin = Math.floor(clamp((lat + Math.PI / 2) / Math.PI, 0, 0.999) * 96);
+    const key = (p.hash >>> 0) + ':' + lonBin + ':' + latBin;
+    let b = biomeColCache.get(key);
+    if (b) return b;
+    b = RS.planet.biomeAt(p, lon, lat, epoch).biome;
+    if (biomeColCache.size >= BIOME_COL_MAX) biomeColCache.clear();
+    biomeColCache.set(key, b);
+    return b;
+  }
+
+  let hoodCanvas = null, hoodKey = '';
+
+  function drawFreeroam(ctx, game, p, s) {
+    const w = V().w, h = V().h;
+    const span = 0.16 * (1 + s.altitude * 2.4);
+    const FW = RS.scenes.FREE_W, FH = RS.scenes.FREE_H;
+    const spanLat = span * (FH / FW);
+    const epoch = s.t || 0;
+    const lonBin = Math.floor(RS.planet.wrapLon(s.lon) / TAU * 256);
+    const latBin = Math.floor(clamp((s.lat + Math.PI / 2) / Math.PI, 0, 0.999) * 128);
+    const key = (p.hash >>> 0) + '|' + w + 'x' + h + '|' + lonBin + '|' + latBin + '|' + Math.round(span * 200);
+
+    if (!hoodCanvas) hoodCanvas = document.createElement('canvas');
+    if (hoodCanvas.width !== w || hoodCanvas.height !== h) {
+      hoodCanvas.width = w; hoodCanvas.height = h;
+      hoodKey = '';
+    }
+    if (hoodKey !== key) {
+      const g = hoodCanvas.getContext('2d');
+      const cellW = w / FW, cellH = h / FH;
+      const dat = RS.planet.datum(p);
+      g.fillStyle = 'rgba(4,8,14,0.92)';
+      g.fillRect(0, 0, w, h);
+      for (let iy = 0; iy < FH; iy++) {
+        const lat = RS.planet.clampLat(s.lat - (iy / (FH - 1) - 0.5) * spanLat * 2);
+        for (let ix = 0; ix < FW; ix++) {
+          const lon = s.lon + (ix / (FW - 1) - 0.5) * span * 2;
+          const b = biomeCached(p, lon, lat, epoch);
+          const elev = RS.planet.elevationAt(p, lon, lat);
+          const relief = clamp(0.78 + (elev - dat) * 0.4, 0.5, 1.35);
+          g.fillStyle = hsl(b.hue, b.sat, clamp01(b.lum * relief), 1);
+          g.fillRect(Math.floor(ix * cellW), Math.floor(iy * cellH), Math.ceil(cellW) + 1, Math.ceil(cellH) + 1);
+        }
+      }
+      hoodKey = key;
+    }
+    ctx.drawImage(hoodCanvas, 0, 0);
+
+    /* Agents in world lon/lat. */
+    for (const a of s.agents) {
+      const dlon = RS.scenes.wrapDeltaLon((a.lon != null ? a.lon : s.lon) - s.lon);
+      const dlat = (a.lat != null ? a.lat : s.lat) - s.lat;
+      const X = w * 0.5 + (dlon / (span * 2)) * w;
+      const Y = h * 0.5 - (dlat / (spanLat * 2)) * h;
+      if (X < -8 || X > w + 8 || Y < -8 || Y > h + 8) continue;
+      ctx.fillStyle = hsl(a.fauna.hue, 0.6, a.ridden ? 0.78 : 0.55, 0.95);
+      ctx.beginPath(); ctx.arc(X, Y, 3.2, 0, TAU); ctx.fill();
+    }
+
+    drawVesselGlyph(ctx, game, w * 0.5, h * 0.5);
+    /* Heading tick so the map reads as a body, not a cursor. */
+    const body = game.body;
+    const hd = body.heading || 0;
+    ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(w * 0.5, h * 0.5);
+    ctx.lineTo(w * 0.5 + Math.cos(hd) * 16, h * 0.5 - Math.sin(hd) * 16);
+    ctx.stroke();
+  }
+
+  function drawVesselGlyph(ctx, game, X, Y) {
+    const body = game.body;
+    if (!body) return;
     const arch = RS.vessel.archOf(body);
-    const X = w * 0.5 + body.x * 0;   // the player stays centred; the world moves
-    const Y = horizon + (base - base) * vscale + body.y * vscale * 0.35;
     const size = px(0.022);
 
     ctx.save();
-    ctx.translate(X, Y - size);
-    ctx.rotate(Math.sin(game.scene.t * 60) * 0.02 + body.heading * 0.06);
+    ctx.translate(X, Y - size * 0.15);
+    ctx.rotate(Math.sin((game.scene.t || 0) * 60) * 0.02 + (body.heading || 0) * 0.06);
 
     const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, size * 3.2);
     glow.addColorStop(0, hsl(arch.hue, 0.8, 0.8, 0.5));
@@ -692,16 +849,15 @@
     ctx.fillText(arch.glyph, 0, 0);
     ctx.restore();
 
-    /* Charge ring under the body — always visible, never a menu item. */
     const cf = body.charge / arch.capacity;
     ctx.strokeStyle = hsl(cf > 0.25 ? 160 : 0, 0.85, 0.6, 0.8);
     ctx.lineWidth = 2.2;
     ctx.beginPath();
-    ctx.arc(X, Y - size, size * 2.1, -Math.PI / 2, -Math.PI / 2 + TAU * clamp01(cf));
+    ctx.arc(X, Y - size * 0.15, size * 2.1, -Math.PI / 2, -Math.PI / 2 + TAU * clamp01(cf));
     ctx.stroke();
   }
 
   RS.worldrender = { drawSystem, drawPlanet, radiusMap, bodyScreen, atmosphereHue,
-    globeTexture, globeDisc,
-    clearTextureCache() { texCache.clear(); discCanvas = null; discKey = ''; } };
+    globeTexture, globeDisc, drawVesselGlyph, drawFreeroam,
+    clearTextureCache() { texCache.clear(); discCanvas = null; discKey = ''; biomeColCache.clear(); hoodCanvas = null; hoodKey = ''; } };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));

@@ -472,7 +472,16 @@ surface without gaining a second control.
   disagree about which one it is.
 - **Tides scale as the cube of distance**, so a close small moon out-pulls a
   distant large one, and several moons produce a genuinely messy tide with
-  occasional spring alignments rather than simply a bigger one.
+  occasional spring alignments rather than simply a bigger one. The waterline
+  used for drawing and for "am I submerged?" follows that tide; hydrosphere
+  itself is never mutated.
+
+Embodied on a planet you walk a **lon/lat tangent plane** against the derived
+heightfield. Near the ground the camera is a rich side-on slice (multi-biome
+silhouette, live waterline). Climb or toggle and it becomes a 48×32 freeroam
+neighbourhood of the same samples. Observing still uses the globe. Switching
+never teleports: pose is `(lon, lat, altitude)` and nothing about the sphere
+is stored.
 
 ### And silence where there is no medium
 

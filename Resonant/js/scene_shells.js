@@ -164,6 +164,7 @@
     const s = game.scene;
     s.shellT = (s.shellT || 0) + dt;
     if (!s.shells) enter(game, bus);
+    if (game.inhabiting && game.body) RS.vessel.confine(game.body, 0.95);
   }
 
   /* Degeneracy is a coincidence and coincidences are worth catching. Displaced

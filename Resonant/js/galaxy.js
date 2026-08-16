@@ -199,6 +199,14 @@
   function tick(game, bus, dt) {
     game.galaxy.t += dt;
     refresh(game);
+    if (game.inhabiting && game.body) {
+      const G = game.galaxy;
+      const body = game.body;
+      G.driftX = clamp((G.driftX || 0) + body.vx * dt * 0.18, -0.45, 0.45);
+      G.driftY = clamp((G.driftY || 0) + body.vy * dt * 0.18, -0.45, 0.45);
+      body.x = G.driftX;
+      body.y = G.driftY;
+    }
   }
 
   // ── rendering ────────────────────────────────────────────────────────────
@@ -380,6 +388,14 @@
     ctx.textAlign = 'left';
     ctx.fillStyle = 'rgba(200,220,245,0.6)';
     ctx.fillText(barLy + ' ly', bx, by - 6);
+
+    if (game.inhabiting && game.body && RS.worldrender && RS.worldrender.drawVesselGlyph) {
+      const dx = (game.galaxy.driftX || game.body.x || 0);
+      const dy = (game.galaxy.driftY || game.body.y || 0);
+      RS.worldrender.drawVesselGlyph(ctx, game,
+        V.cx + (dx / span) * V.R,
+        V.cy + (dy / span) * V.R * 0.86);
+    }
   }
 
   /* Hit test for taps. Generous, because stars are small targets. */

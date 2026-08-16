@@ -223,6 +223,7 @@
 
     const tier = RS.cosmos.TIERS[clamp(Math.round(D.space.value), 0, RS.cosmos.TIERS.length - 1)];
     s.web = webAt(game, game.galaxy.sx, game.galaxy.sy, tier.id, timeOf(game), s.web);
+    if (game.inhabiting && game.body) RS.vessel.confine(game.body, 0.95);
   }
 
   function enter(game, bus) {

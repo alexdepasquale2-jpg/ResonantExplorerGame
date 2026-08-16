@@ -135,6 +135,7 @@
     const s = game.scene;
     s.molT = (s.molT || 0) + dt * 0.7;
     if (!s.molecule) enter(game, bus);
+    if (game.inhabiting && game.body) RS.vessel.confine(game.body, 0.95);
   }
 
   /* Finding the wrong-handed molecule on a world that settled the question

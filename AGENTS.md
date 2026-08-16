@@ -29,8 +29,15 @@ Developer cheat HUD (debug only):
 - Enabled automatically on `localhost` / `127.0.0.1`, or with `?debug=1`, or
   when `localStorage.resonantDebug === '1'`.
 - Press backtick (`` ` ``) to toggle the floating DEV panel. Grant Insight, max
-  unlocks, jump scenes, snap φ to bands, apply presets, and force-save from
-  there. Actions go through existing `RS.*` APIs (`js/debug.js`).
+  unlocks, jump scenes, snap φ to bands, apply presets, force-save, teleport
+  lon/lat, dump the biome/elevation underfoot, and force planet camera mode
+  (side-on / freeroam / globe) from there. Actions go through existing `RS.*`
+  APIs (`js/debug.js`).
+
+Planet cameras (while inhabiting): near-ground is the side-on slice; altitude
+above ~0.22 (or a debug force) is the 48×32 freeroam neighbourhood; observing
+is still the globe. Sample counts are fixed — do not grow them with zoom. No
+heightmaps: `effective = derived(address) ⊕ deltas`.
 
 Non-obvious notes for developing/testing in the browser:
 

@@ -79,9 +79,29 @@ analytic where it buys scale, integrated where it buys feel.
 > **If you find yourself adding an array of world objects, stop.** Derive it
 > from its address instead. Everything in the game already does.
 
+### 2.2b Dual cameras on a planet, one heightfield
+
+While inhabiting a planet the camera is a view of the same derived sphere, not
+a second world:
+
+- **Observing** → globe (baked 96×48 biome table, unchanged).
+- **Near the ground** → rich side-on slice (96-sample profile, multi-biome fill,
+  tide waterline, parallax far band).
+- **Altitude above ~0.22, or a debug/force toggle** → 48×32 freeroam
+  neighbourhood. Zoom opens the span; sample count does not.
+
+Pose is `(scene.lon, scene.lat, scene.altitude)`. Agents live in lon/lat.
+Saves still persist only those numbers. Debug HUD can teleport and dump the
+patch underfoot.
+
+Sample budgets are fixed: profile 96, freeroam 48×32, globe 96×48. Do not grow
+them with zoom. Cellular / system / galaxy / field / web / molecular / shells
+draw the vessel glyph and couple `body.x/y` to the local derived room. Foam
+stays embark-blocked.
+
 ### 2.3 The test suite is the specification
 
-`tools/simtest.js` is 1652 assertions and about half the value of this
+`tools/simtest.js` is 1652+ assertions and about half the value of this
 repository. It runs headless in Node against the real modules (including
 `ui.js`, `audio.js` — the HTML builders are pure string functions).
 
@@ -226,9 +246,10 @@ rather than a number.
 
 ## 7. What to do next, in order of value
 
-The culture, riding, range, bloom-buffer and mobile-layout passes have landed.
-See `contact.js` (rumours, relays, `lean`), `bloom.js` (`begin` / `captureWorld` /
-`blit`), and the 560px drawer-tab / pilot-bar rules in `style.css`.
+The vessel open-world pass has landed: planetary geology (essence meso-detail,
+multi-biome profiles, live tides, seasons, `resourceAt`), lon/lat freeroam plus
+rich side-on sharing one heightfield, and place-aware vessel glyphs in
+cellular / system / galaxy / field / web / molecular / shells.
 
 What is still worth doing:
 
@@ -242,6 +263,10 @@ What is still worth doing:
 3. **Guide copy for riding a culture.** The symbiont now works in orbit. The
    live guide still talks about riding a creature first, which is the common
    case, but an orbital ride is easy to miss.
+4. **Galaxy vacuum drift** is a short leash around the current sector. A
+   transfer that actually changes `galaxy.sx/sy` would make the courier's
+   interstellar job real, but it has to stay an address change, not a stored
+   path.
 
 ---
 

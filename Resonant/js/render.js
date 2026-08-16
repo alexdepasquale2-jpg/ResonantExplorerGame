@@ -1095,6 +1095,10 @@
       drawReticle(ctx, game, t);
       drawCentre(ctx, game, t, spec);
 
+      if (game.inhabiting && game.body && !inFoam && RS.worldrender && RS.worldrender.drawVesselGlyph) {
+        RS.worldrender.drawVesselGlyph(ctx, game, sx(game.body.x), sy(game.body.y));
+      }
+
       /* The live primitives for whatever you are working on, stacked in the
        * gap between the reticle and the instruments. Anchored to the viewport
        * rather than to the node: a readout that chases a drifting node is

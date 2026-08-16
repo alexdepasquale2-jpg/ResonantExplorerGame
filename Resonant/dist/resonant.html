@@ -5481,14 +5481,18 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     for (let i = 0; i < n && ma < hill * 0.45; i++) {
       const mh = hashN(h, 400 + i);
       const mMass = p.massE * (0.0001 + hashF(mh, 1) * 0.02);
+      const planetMassSolar = p.massE / RS.stellar.EARTH_MASSES_PER_SOLAR;
       moons.push({
         index: i, hash: mh,
         massE: mMass,
         radiusE: radiusOf(mMass, p.body.beyondFrost),
         a: ma,
+        /* Keplerian period in years, from the moon's actual semi-major axis
+         * around this planet. Tide phase used to fall back to `period || 1`,
+         * which made every moon a one-year clock and every beach the same. */
+        period: RS.orbital.period(ma, planetMassSolar),
         name: p.name + ' ' + String.fromCharCode(97 + i),
-        elements: RS.orbital.elementsFrom(mh, ma,
-          p.massE / RS.stellar.EARTH_MASSES_PER_SOLAR, { eMax: 0.06, iMax: 0.12 }),
+        elements: RS.orbital.elementsFrom(mh, ma, planetMassSolar, { eMax: 0.06, iMax: 0.12 }),
         /* Tidal heating from a close, eccentric orbit around a massive primary
          * — the Europa/Io mechanism, and the reason a moon far outside the
          * habitable zone can still hold a subsurface ocean. */
@@ -5540,6 +5544,27 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     return e;
   }
 
+  function wrapLon(lon) {
+    return ((lon % TAU) + TAU) % TAU;
+  }
+
+  function clampLat(lat) {
+    return clamp(lat, -Math.PI / 2 + 0.02, Math.PI / 2 - 0.02);
+  }
+
+  /* Essence at a hillside-sized patch. Neighbouring samples share a cell so
+   * meso detail is coherent over a slope rather than sparkling per coordinate. */
+  function essenceAtPatch(p, lon, lat) {
+    const cl = Math.cos(lat);
+    const x = Math.cos(lon) * cl, y = Math.sin(lon) * cl, z = Math.sin(lat);
+    /* Round, not floor: a floor bin edge sits on the antimeridian (y = 0,
+     * x = −1) and would make 180° a cliff. */
+    const cellX = Math.round((x + 1) * 24);
+    const cellY = Math.round((y + 1) * 24);
+    const slot = Math.round((z + 1) * 8);
+    return RS.fractal.essenceAt(p.hash, cellX, cellY, slot);
+  }
+
   /* Elevation including small-scale roughness.
    *
    * `elevationAt` is a *planetary* field: its features have wavelengths of
@@ -5553,19 +5578,43 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
    * enough to change a biome or a coastline, so the globe and the ground still
    * agree about where the mountains and oceans are. Amplitude follows the
    * world's own tectonics and cratering, so a dead smooth world really is
-   * smooth underfoot and an active one is broken ground. */
+   * smooth underfoot and an active one is broken ground.
+   *
+   * Meso shape is further tinted by the local essence: branching raises ridges
+   * and carves drainage, persistence softens the high octaves, symmetry makes
+   * the hills more regular. The axes are the same 64 numbers everywhere else. */
   function elevationDetailAt(p, lon, lat) {
     const base = elevationAt(p, lon, lat);
+    const ess = essenceAtPatch(p, lon, lat);
+    const ridgeAmp = lerp(0.82, 1.18, ess.branching);
+    const softAmp = lerp(1.12, 0.72, ess.persistence);
+    const jitter = lerp(1.12, 0.88, ess.symmetry);
     const rough = 0.25 + p.tectonics * 0.9 + p.cratering * 0.5;
-    /* Three bands, each an order of magnitude finer than the last: hills,
-     * boulders, then the texture underfoot. */
+    /* Sample on the sphere so the extra octaves inherit the same antimeridian
+     * continuity as `elevationAt`. lon*N noise would seam, and a walker
+     * crossing 180° would step off a cliff that is not there. */
+    const cl = Math.cos(lat);
+    const x = Math.cos(lon) * cl, y = Math.sin(lon) * cl, z = Math.sin(lat);
     let d = 0;
-    d += (fbm(p.hash ^ 0xD37A, lon * 42, lat * 42 + 5, 3) * 2 - 1) * 0.085;
-    d += (fbm(p.hash ^ 0xB017, lon * 190, lat * 190 + 11, 2) * 2 - 1) * 0.028;
-    d += (fbm(p.hash ^ 0x51CE, lon * 880, lat * 880 + 3, 2) * 2 - 1) * 0.008;
+    d += (fbm(p.hash ^ 0xD37A, x * 42 * jitter, y * 42 + z * 5, 3) * 2 - 1) * 0.085 * ridgeAmp;
+    d += (fbm(p.hash ^ 0xB017, x * 190, y * 190 + 11, 2) * 2 - 1) * 0.028 * softAmp;
+    d += (fbm(p.hash ^ 0x51CE, x * 880, y * 880 + z * 3, 2) * 2 - 1) * 0.008 * softAmp;
+    if (ess.branching > 0.45) {
+      const drain = 1 - Math.abs(fbm(p.hash ^ 0xD41A, x * 64, y * 64, 2) * 2 - 1);
+      d -= drain * drain * (ess.branching - 0.45) * 0.05;
+    }
     /* Wind and water smooth things out; airless worlds keep their sharp edges. */
     const erosion = 1 / (1 + p.pressure * 0.35 + p.hydrosphere * 0.6);
-    return base + d * rough * erosion;
+    let result = base + d * rough * erosion;
+    /* Detail never flips land versus sea against the planetary field. That is
+     * the contract the globe and the ground share: biomes and coastlines are
+     * `elevationAt`'s job. */
+    const sea = seaLevel(p);
+    if (p.hydrosphere > 0) {
+      if (base >= sea && result < sea) result = sea;
+      if (base < sea && result >= sea) result = sea - 1e-4;
+    }
+    return result;
   }
 
   /* Sea level, set so that the hydrosphere fraction of the surface is covered.
@@ -5620,7 +5669,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
    * tidally locked world — by longitude, because one hemisphere never sees its
    * star. Locked worlds therefore get a genuinely different climate map with a
    * habitable terminator ring, and that falls out of the same formula. */
-  function temperatureAt(p, lon, lat, elev) {
+  function temperatureAt(p, lon, lat, elev, epochYears) {
     let insolation;
     if (p.tidallyLocked) {
       /* Substellar point at lon 0. */
@@ -5628,6 +5677,14 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       insolation = clamp01(sub) * 1.5 + 0.06;
     } else {
       insolation = Math.cos(lat) * 0.85 + 0.28;
+      /* Seasonal nudge from axial tilt. The globe omits the epoch so its
+       * texture cache stays a climate mean; the surface passes `scene.t` so
+       * poles can freeze and thaw without storing a map. */
+      if (epochYears != null && p.axialTilt > 0.05) {
+        const yearPhase = ((epochYears % 1) + 1) % 1;
+        const decl = p.axialTilt * Math.sin(yearPhase * TAU);
+        insolation += Math.sin(lat) * decl * 0.45;
+      }
     }
     /* Thick atmospheres transport heat and flatten the gradient — which is why
      * Venus is nearly isothermal and Mars is not. */
@@ -5639,7 +5696,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     return T - above * 55 * p.gravity / (1 + p.pressure * 0.5);
   }
 
-  function moistureAt(p, lon, lat, elev) {
+  function moistureAt(p, lon, lat, elev, epochYears) {
     if (p.hydrosphere <= 0) return 0;
     const cl = Math.cos(lat);
     const x = Math.cos(lon) * cl, y = Math.sin(lon) * cl, z = Math.sin(lat);
@@ -5647,14 +5704,21 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     /* Closer to the datum and closer to water means wetter; high ground in a
      * continental interior is dry. */
     const proximity = clamp01(1 - (elev - datum(p)) * 1.6);
-    return clamp01(base * 0.55 + proximity * 0.55) * clamp01(p.hydrosphere * 2.2);
+    let m = clamp01(base * 0.55 + proximity * 0.55) * clamp01(p.hydrosphere * 2.2);
+    if (epochYears != null && !p.tidallyLocked && p.axialTilt > 0.09) {
+      const yearPhase = ((epochYears % 1) + 1) % 1;
+      const decl = p.axialTilt * Math.sin(yearPhase * TAU);
+      /* Summer hemisphere evaporates a little; winter holds more as snow. */
+      m = clamp01(m * (1 - Math.sin(lat) * decl * 0.18));
+    }
+    return m;
   }
 
-  function biomeAt(p, lon, lat) {
+  function biomeAt(p, lon, lat, epochYears) {
     const elev = elevationAt(p, lon, lat);
     const sea = seaLevel(p);
-    const T = temperatureAt(p, lon, lat, elev);
-    const M = moistureAt(p, lon, lat, elev);
+    const T = temperatureAt(p, lon, lat, elev, epochYears);
+    const M = moistureAt(p, lon, lat, elev, epochYears);
 
     if (p.type === TYPES.lava) return { biome: BIOME_BY_ID.lava, elev, T, M };
     if (elev < sea) {
@@ -5699,11 +5763,38 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     return { biomes: out, landFraction: land / n, temperateFraction: hab / n };
   }
 
+  /* Local abundance at a standing patch. Planet-wide `resources` is the ore
+   * body; this is the outcrop. Hash + elevation + biome, never a stored map. */
+  function resourceAt(p, lon, lat) {
+    const r = biomeAt(p, lon, lat);
+    const h = hashN(p.hash, Math.round(lon * 40), Math.round(lat * 40));
+    const id = r.biome.id;
+    const above = Math.max(0, r.elev - datum(p));
+    const out = {};
+    let i = 0;
+    for (const k in p.resources) {
+      let v = p.resources[k] * (0.6 + hashF(h, 3 + i) * 0.8);
+      i++;
+      if (k === 'metals' && (id === 'mountain' || id === 'badlands')) v *= 1.35;
+      if (k === 'silicates' && (id === 'regolith' || id === 'desert')) v *= 1.25;
+      if (k === 'volatiles' && (id === 'ice' || id === 'ocean' || id === 'shallows')) v *= 1.4;
+      if (k === 'organics' && (id === 'forest' || id === 'jungle' || id === 'grass')) v *= 1.45;
+      if (k === 'rareEarths' && (id === 'mountain' || id === 'crystal')) v *= 1.3;
+      if (k === 'fissiles' && above > 0.4) v *= 1.2;
+      if (k === 'exotics' && (id === 'crystal' || id === 'lava')) v *= 1.5;
+      if (k === 'metals') v *= 1 + above * 0.4;
+      if (k === 'organics') v *= 1 - clamp01(above) * 0.35;
+      out[k] = clamp01(v);
+    }
+    return out;
+  }
+
   RS.planet = {
     GASES, TYPES, BIOMES, BIOME_BY_ID, RESOURCE_KINDS,
     radiusOf, thermalVelocity, retains, equilibriumTemp, greenhouseFactor,
     planetAt, classify, habitabilityOf, resourcesOf, moonsOf,
-    elevationAt, elevationDetailAt, seaLevel, datum, temperatureAt, moistureAt, biomeAt, survey
+    elevationAt, elevationDetailAt, seaLevel, datum, temperatureAt, moistureAt, biomeAt, survey,
+    wrapLon, clampLat, essenceAtPatch, resourceAt
   };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));
 
@@ -6150,14 +6241,29 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     if (scene.kind === 'planet' && scene.planet) {
       const p = scene.planet;
       const surf = scene.surface || {};
-      const submerged = surf.elev != null && surf.elev < RS.planet.seaLevel(p);
+      const water = surf.sea != null ? surf.sea : RS.planet.seaLevel(p);
+      const submerged = surf.elev != null && surf.elev < water;
+      let slope = 0;
+      if (game.inhabiting && game.body) {
+        const heading = game.body.heading;
+        const step = 0.005;
+        const clat = Math.max(0.12, Math.cos(scene.lat || 0));
+        const e0 = RS.planet.elevationDetailAt(p, scene.lon, scene.lat);
+        const e1 = RS.planet.elevationDetailAt(p,
+          scene.lon + Math.cos(heading) * step / clat,
+          scene.lat + Math.sin(heading) * step);
+        slope = e1 - e0;
+      }
+      const biomeId = surf.biome && surf.biome.id;
       return {
         medium: submerged ? MEDIUM.LIQUID : (scene.altitude > 0.04 ? MEDIUM.GAS : MEDIUM.SURFACE),
         gravity: p.gravity,
         pressure: p.pressure,
         temperature: surf.T == null ? p.surfaceTemp : surf.T,
         flux: p.flux,
-        roughness: clamp01(p.tectonics * 0.8 + p.cratering * 0.5),
+        roughness: clamp01(p.tectonics * 0.8 + p.cratering * 0.5 + Math.abs(slope) * 2),
+        slope,
+        biomeId,
         hasMinds: !!(p.biosphere && p.biosphere.complexity > 0.5),
         label: p.name
       };
@@ -6284,6 +6390,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       archId: archId || 'mote',
       x: 0, y: 0,          // position in scene-normalised units
       vx: 0, vy: 0,
+      vz: 0,               // northward on a surface; unused in other media
       heading: 0,
       /* Σ means something different per archetype but is always "the vertical
        * axis of this body" — altitude, depth, stance, orbital radius. */
@@ -6346,18 +6453,30 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     // --- thrust -----------------------------------------------------------
     /* Heading comes from Δ, magnitude from τ, and the direct drag gesture adds
      * on top — so a player can fly with dials alone, or grab the field and
-     * steer, or both. Neither is the "real" control scheme. */
-    let tx = Math.cos(ctl.heading) * ctl.rate;
-    let ty = Math.sin(ctl.heading) * ctl.rate;
-    tx += body.steerX; ty += body.steerY;
-    const tmag = Math.hypot(tx, ty);
-    if (tmag > 1) { tx /= tmag; ty /= tmag; }
-
-    /* Charge gates thrust. Running dry is not a fail state, it is a limp. */
+     * steer, or both. Neither is the "real" control scheme.
+     *
+     * On a planet surface, heading is a compass bearing: τ drives the tangent
+     * plane (east = vx, north = vz) and Σ is the vertical. Elsewhere the old
+     * mapping stands — heading's sine is still a vertical in liquids and gas
+     * because those media do not have a longitude to walk. */
     const powered = body.charge > 0.5 ? 1 : 0.15;
     const accel = arch.thrust / arch.mass * authority * powered;
-
-    let ax = tx * accel, ay = ty * accel;
+    const onPlanetSurface = env.medium === MEDIUM.SURFACE && game.scene && game.scene.kind === 'planet';
+    let ax, ay, az = 0;
+    if (onPlanetSurface) {
+      ax = Math.cos(ctl.heading) * ctl.rate * accel;
+      az = Math.sin(ctl.heading) * ctl.rate * accel;
+      ax += body.steerX * accel; az += body.steerY * accel;
+      ay = 0;
+    } else {
+      let tx = Math.cos(ctl.heading) * ctl.rate;
+      let ty = Math.sin(ctl.heading) * ctl.rate;
+      tx += body.steerX; ty += body.steerY;
+      const mag = Math.hypot(tx, ty);
+      if (mag > 1) { tx /= mag; ty /= mag; }
+      ax = tx * accel; ay = ty * accel;
+    }
+    const tmag = Math.hypot(ctl.rate, body.steerX, body.steerY);
 
     // --- gravity ----------------------------------------------------------
     /* On a surface, "down" is +y in scene space (the surface view is a side-on
@@ -6373,46 +6492,94 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
         const lift = arch.liftC * env.pressure * speed * speed / arch.mass;
         ay -= Math.min(lift, g * 2.4) * authority;
       }
+      /* Σ verticals. Neutral at 0.5 so a centred dial does not hop. Walker
+       * stance is a small crouch/stretch on the floor; flier/probe chase an
+       * altitude; lander burns against gravity. */
+      const vertLift = (ctl.vert - 0.5);
+      if (env.medium === MEDIUM.SURFACE) {
+        if (arch.id === 'lander') ay -= vertLift * 3.2 * authority;
+        else if (arch.id === 'walker' || arch.id === 'rover' || arch.id === 'harvester' || arch.id === 'symbiont') {
+          /* Hop only when Σ is pushed well above centre, so walking does not
+           * bounce. Stance offset is applied after ground contact. */
+          if (ctl.vert > 0.78 && body.y >= -0.02) ay -= (ctl.vert - 0.78) * 4.5 * authority;
+        }
+      }
+      if (env.medium === MEDIUM.GAS && (arch.liftC > 0 || arch.id === 'lander' || arch.id === 'probe' || arch.id === 'flier')) {
+        const targetY = -ctl.vert * 0.62;
+        ay += (targetY - body.y) * 2.1 * authority;
+      }
     }
     if (env.medium === MEDIUM.LIQUID) {
       /* Buoyancy set by Σ: the player trims their own density. Sink to sense,
        * rise to travel. */
       ay += (0.5 - ctl.vert) * 1.6 * authority;
     }
+    if (env.medium === MEDIUM.ORBIT && (arch.id === 'courier' || arch.id === 'lander' || arch.id === 'probe')) {
+      /* Courier Σ is orbital radius, applied in the system tick. Here it only
+       * trims out-of-plane drift so the ship stays in the plane. */
+      ay += -body.y * 1.4 * authority;
+    }
+    if (env.medium === MEDIUM.CYTOPLASM) {
+      /* Depth in the cell is Σ; cilia beat is τ. No inertia to speak of. */
+      ay += (ctl.vert - 0.5) * 0.8 * authority;
+    }
+
+    /* Uphill costs speed. Ice slips, sand drags — biome, not a stat. */
+    if (onPlanetSurface && env.slope > 0) {
+      const hill = 1 / (1 + env.slope * 5);
+      ax *= hill; az *= hill;
+    }
 
     // --- drag / friction --------------------------------------------------
     /* Density of the medium the body is moving through. Vacuum has none, which
      * is why a courier coasts and a swimmer does not. */
     const density = env.medium === MEDIUM.LIQUID ? 30
+      : env.medium === MEDIUM.CYTOPLASM ? 80
       : env.medium === MEDIUM.GAS ? env.pressure * 1.4
         : env.medium === MEDIUM.SURFACE ? 0.6 + env.pressure * 0.5
           : 0.02;
-    const dragRate = arch.dragC * density * 0.35;
+    let dragRate = arch.dragC * density * 0.35;
+    if (env.biomeId === 'desert' || env.biomeId === 'dunes') dragRate *= 1.45;
+    if (env.biomeId === 'shallows') dragRate *= 1.2;
 
     body.vx += ax * dt;
     body.vy += ay * dt;
+    body.vz = (body.vz || 0) + az * dt;
 
     const f = Math.exp(-dragRate * dt);
-    body.vx *= f; body.vy *= f;
+    body.vx *= f; body.vy *= f; body.vz *= f;
 
     /* Ground contact: friction and a floor. */
-    if ((env.medium === MEDIUM.SURFACE) && body.y >= 0) {
-      body.y = 0;
+    const floor = env.groundY != null ? env.groundY : 0;
+    if ((env.medium === MEDIUM.SURFACE) && body.y >= floor) {
+      /* Walker stance: Σ above ~0.35 lifts the silhouette slightly (negative
+       * y is up). Applied on the floor so gravity does not fight it. */
+      const stanceUp = (arch.id === 'walker' && ctl.vert > 0.4)
+        ? (ctl.vert - 0.4) * 0.14 : 0;
+      body.y = floor - stanceUp;
       if (body.vy > 0) body.vy = 0;
-      const gf = Math.exp(-arch.grip * 3.4 * dt);
+      let grip = arch.grip;
+      if (env.biomeId === 'ice') grip *= 0.22;
+      else if (env.biomeId === 'desert' || env.biomeId === 'savanna') grip *= 0.72;
+      const gf = Math.exp(-grip * 3.4 * dt);
       body.vx *= gf;
+      body.vz *= gf;
     }
 
     body.x += body.vx * dt;
     body.y += body.vy * dt;
 
     /* Heading follows travel when moving, so the body visibly turns into its
-     * motion rather than sliding sideways. */
-    const sp = Math.hypot(body.vx, body.vy);
+     * motion rather than sliding sideways. On a planet the travel vector is
+     * east/north, not east/up. */
+    const sp = onPlanetSurface
+      ? Math.hypot(body.vx, body.vz)
+      : Math.hypot(body.vx, body.vy);
     if (sp > 0.02) {
+      const want = onPlanetSurface ? Math.atan2(body.vz, body.vx) : Math.atan2(body.vy, body.vx);
       body.heading = RS.core.turnToward
-        ? RS.core.turnToward(body.heading, Math.atan2(body.vy, body.vx), dt * 6)
-        : Math.atan2(body.vy, body.vx);
+        ? RS.core.turnToward(body.heading, want, dt * 6)
+        : want;
     }
 
     // --- expenditure ------------------------------------------------------
@@ -6533,10 +6700,20 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     return archOf(body).mass + body.holdMass * 0.02;
   }
 
+  /* Keep a body inside a disc of field units. Used by cytoplasm, shells, and
+   * the other place-aware scopes so a vessel cannot leave the derived room. */
+  function confine(body, radius) {
+    const r = Math.hypot(body.x, body.y);
+    if (r <= radius) return;
+    const s = radius / (r || 1);
+    body.x *= s; body.y *= s;
+    body.vx *= 0.45; body.vy *= 0.45;
+  }
+
   RS.vessel = {
     MEDIUM, ARCHETYPES, BY_ID,
     environmentFor, canOperate, availability, bestHere, statusOf, enduranceOf,
-    newBody, archOf, controlsFrom, integrate,
+    newBody, archOf, controlsFrom, integrate, confine,
     ride, unride, stepMind, senseRadius, canSenseBand,
     addCargo, removeCargo, effectiveMass
   };
@@ -6894,10 +7071,13 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
      * partially cancel — the difference between a spring and a neap tide, which
      * is a real thing a player standing on a beach could notice. */
     let vx = 0, vy = 0;
+    const planetMassSolar = p.massE / RS.stellar.EARTH_MASSES_PER_SOLAR;
     for (let i = 0; i < moons.length; i++) {
       const m = moons[i];
-      const per = Math.max(0.02, m.period || 1);
-      const ang = (epochYears * 365.25 / per) * TAU;
+      /* Period is years (Kepler). Used to treat a missing period as 1 and then
+       * multiply by 365.25, which made every moon a one-day clock. */
+      const per = Math.max(1e-6, m.period || RS.orbital.period(m.a || 0.002, planetMassSolar));
+      const ang = (epochYears / per) * TAU;
       const pull = (m.massE || 0.01) / Math.pow(Math.max(0.001, m.a || 0.002), 3) * 1e-9;
       sum += pull;
       if (pull > maxOne) maxOne = pull;
@@ -6913,6 +7093,16 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     o.spring = o.alignment > 0.82 && moons.length > 1;
     o.phase = Math.atan2(vy, vx);
     return o;
+  }
+
+  /* Instantaneous waterline at a longitude. Draw and collision sample only —
+   * hydrosphere and `seaLevel` stay the derived constants they always were. */
+  function waterlineAt(p, lon, epochYears) {
+    const sea = RS.planet.seaLevel(p);
+    if (p.hydrosphere <= 0) return sea;
+    const tide = tideAt(p, epochYears || 0);
+    /* k is small so a spring tide wets the beach without drowning a continent. */
+    return sea + 0.055 * tide.height * Math.cos((tide.phase || 0) + lon);
   }
 
   /* Everything at once, for the readout and the renderer. One call per frame. */
@@ -6949,7 +7139,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     return bits.join(' · ');
   }
 
-  RS.localtime = { HOURS_PER_YEAR, sunAt, seasonOf, tideAt, stateFor, describe };
+  RS.localtime = { HOURS_PER_YEAR, sunAt, seasonOf, tideAt, waterlineAt, stateFor, describe };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));
 
 </script>
@@ -7592,6 +7782,14 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   function tick(game, bus, dt) {
     game.galaxy.t += dt;
     refresh(game);
+    if (game.inhabiting && game.body) {
+      const G = game.galaxy;
+      const body = game.body;
+      G.driftX = clamp((G.driftX || 0) + body.vx * dt * 0.18, -0.45, 0.45);
+      G.driftY = clamp((G.driftY || 0) + body.vy * dt * 0.18, -0.45, 0.45);
+      body.x = G.driftX;
+      body.y = G.driftY;
+    }
   }
 
   // ── rendering ────────────────────────────────────────────────────────────
@@ -7773,6 +7971,14 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     ctx.textAlign = 'left';
     ctx.fillStyle = 'rgba(200,220,245,0.6)';
     ctx.fillText(barLy + ' ly', bx, by - 6);
+
+    if (game.inhabiting && game.body && RS.worldrender && RS.worldrender.drawVesselGlyph) {
+      const dx = (game.galaxy.driftX || game.body.x || 0);
+      const dy = (game.galaxy.driftY || game.body.y || 0);
+      RS.worldrender.drawVesselGlyph(ctx, game,
+        V.cx + (dx / span) * V.R,
+        V.cy + (dy / span) * V.R * 0.86);
+    }
   }
 
   /* Hit test for taps. Generous, because stars are small targets. */
@@ -9396,6 +9602,42 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     /* Cytoplasmic streaming. The cell is not still and should never look it —
      * a static interior reads as a diagram rather than as a living thing. */
     s.cellT = (s.cellT || 0) + dt * 0.6;
+    tickPlace(game, dt);
+  }
+
+  /* Live pose of an organelle, matching the renderer so collision and drawing
+   * agree. */
+  function organellePose(o, ct) {
+    const a = Math.atan2(o.y, o.x) + ct * o.drift;
+    const r = Math.hypot(o.x, o.y) * (1 + Math.sin(ct * 0.8 + o.phase) * 0.05);
+    return { x: Math.cos(a) * r, y: Math.sin(a) * r };
+  }
+
+  /* Bind the vessel into cell space: membrane wall, organelle obstacles and
+   * attractors from the same essence axes used everywhere else. */
+  function tickPlace(game, dt) {
+    if (!game.inhabiting || !game.body) return;
+    const s = game.scene;
+    const cell = s.cell;
+    if (!cell) return;
+    const body = game.body;
+    RS.vessel.confine(body, 0.92);
+    const ct = s.cellT || 0;
+    for (let i = 0; i < cell.organelles.length; i++) {
+      const o = cell.organelles[i];
+      const pose = organellePose(o, ct);
+      const dx = body.x - pose.x, dy = body.y - pose.y;
+      const d = Math.hypot(dx, dy) + 1e-4;
+      const ess = o.essence || {};
+      if (ess.id === 'attractor' || ess.persistence > 0.85) {
+        body.vx -= dx / d * 0.18 * dt;
+        body.vy -= dy / d * 0.18 * dt;
+      } else if (d < o.size * 1.15) {
+        const n = (o.size * 1.15 - d) / (o.size * 1.15);
+        body.vx += dx / d * n * 2.4;
+        body.vy += dy / d * n * 2.4;
+      }
+    }
   }
 
   /* ── The only-here consequence ────────────────────────────────────────────
@@ -9438,7 +9680,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 
   RS.cellular = {
     TYPES, typeFor, reasonSterile, cellAt, patchOf,
-    enter, nextCell, tick, expressFrom, readout
+    enter, nextCell, tick, tickPlace, organellePose, expressFrom, readout
   };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));
 
@@ -9669,6 +9911,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 
     const tier = RS.cosmos.TIERS[clamp(Math.round(D.space.value), 0, RS.cosmos.TIERS.length - 1)];
     s.web = webAt(game, game.galaxy.sx, game.galaxy.sy, tier.id, timeOf(game), s.web);
+    if (game.inhabiting && game.body) RS.vessel.confine(game.body, 0.95);
   }
 
   function enter(game, bus) {
@@ -10275,6 +10518,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     const s = game.scene;
     s.molT = (s.molT || 0) + dt * 0.7;
     if (!s.molecule) enter(game, bus);
+    if (game.inhabiting && game.body) RS.vessel.confine(game.body, 0.95);
   }
 
   /* Finding the wrong-handed molecule on a world that settled the question
@@ -10479,6 +10723,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     const s = game.scene;
     s.shellT = (s.shellT || 0) + dt;
     if (!s.shells) enter(game, bus);
+    if (game.inhabiting && game.body) RS.vessel.confine(game.body, 0.95);
   }
 
   /* Degeneracy is a coincidence and coincidences are worth catching. Displaced
@@ -10682,6 +10927,9 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       lon: 0, lat: 0,
       altitude: 0,
       surface: null,
+      /* Dual cameras while inhabiting: 'sideon' | 'freeroam' | 'globe', or
+       * null to follow the altitude rule. Observing always uses the globe. */
+      forceCam: null,
       /* Agents: derived creatures with live minds. Small, pooled, transient. */
       agents: [],
       agentAcc: 0,
@@ -10815,6 +11063,12 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     /* The body is integrated in every scene — even the attunement field, where
      * a mote drifts. */
     if (game.inhabiting) tickBody(game, bus, dt);
+    /* Confine after integration so a long frame cannot punch through a wall. */
+    if (game.inhabiting && game.body) {
+      if (s.kind === 'cellular' || s.kind === 'web' || s.kind === 'molecular' || s.kind === 'shells') {
+        RS.vessel.confine(game.body, 0.95);
+      }
+    }
 
     s.zoom.step(dt); s.camX.step(dt); s.camY.step(dt);
   }
@@ -10980,6 +11234,33 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
      * Awareness is what makes a carrier lock answerable, so simply being
      * present is the first half of making contact. */
     tickContact(game, bus, dt);
+    tickSystemPlace(game, dt);
+  }
+
+  /* Courier Σ → log-space orbital radius. Heading and τ walk the plane.
+   * Hohmann delta-v is charged when the radius changes, so transferring is
+   * not free even though the orbit itself stays analytic. */
+  function tickSystemPlace(game, dt) {
+    const s = game.scene;
+    if (!game.inhabiting || !s.system) return;
+    const ctl = RS.vessel.controlsFrom(game);
+    const inner = Math.max(0.02, s.system.discInner || 0.05);
+    const outer = Math.max(inner * 1.2, s.system.discOuter || inner * 20);
+    const u = clamp01(ctl.vert);
+    const radius = inner * Math.pow(outer / inner, u);
+    s.orbitAngle = (s.orbitAngle || 0) + ctl.rate * dt * 0.55;
+    /* Δ as transfer angle: a held heading precesses the true anomaly. */
+    s.orbitAngle += Math.sin(ctl.heading) * dt * 0.12;
+    const body = game.body;
+    if (s.__lastRadius != null && Math.abs(radius - s.__lastRadius) > 0.001) {
+      const dv = RS.orbital.hohmannDeltaV(s.__lastRadius, radius, s.system.primary.mass);
+      if (dv > 0) body.charge -= Math.min(6, dv * 0.03) * dt;
+    }
+    s.radius = radius;
+    s.__lastRadius = radius;
+    const rr = 0.13 + 0.84 * u;
+    body.x = Math.cos(s.orbitAngle) * rr;
+    body.y = Math.sin(s.orbitAngle) * rr * 0.62;
   }
 
   /* A civilisation with the player's influence applied — uplift, standing,
@@ -11028,11 +11309,15 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   function sampleSurface(game) {
     const s = game.scene;
     if (!s.planet) return null;
-    const r = RS.planet.biomeAt(s.planet, s.lon, s.lat);
+    const r = RS.planet.biomeAt(s.planet, s.lon, s.lat, s.t);
+    const elev = RS.planet.elevationDetailAt(s.planet, s.lon, s.lat);
+    const water = RS.localtime.waterlineAt(s.planet, s.lon, s.t);
     s.surface = {
       lon: s.lon, lat: s.lat,
-      elev: r.elev, T: r.T, M: r.M, biome: r.biome,
-      sea: RS.planet.seaLevel(s.planet)
+      elev, T: r.T, M: r.M, biome: r.biome,
+      sea: water,
+      planetaryElev: r.elev,
+      resource: RS.planet.resourceAt(s.planet, s.lon, s.lat)
     };
     return s.surface;
   }
@@ -11040,20 +11325,76 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   /* The terrain profile under the player: a side-on slice sampled from the
    * elevation field along the current latitude. There is no mesh — this is
    * evaluated fresh every frame for exactly the span on screen, which is why
-   * a planet has no loading time and no level of detail to manage. */
+   * a planet has no loading time and no level of detail to manage.
+   *
+   * Returns `{ elev, biome, moist, n }` rather than a bare Float32Array so the
+   * side-on fill can be multi-biome without a second 96-sample pass. */
   const PROFILE_N = 96;
+  function profileBuf(s, key) {
+    return s[key] || (s[key] = {
+      elev: new Float32Array(PROFILE_N),
+      moist: new Float32Array(PROFILE_N),
+      biome: new Array(PROFILE_N),
+      n: PROFILE_N
+    });
+  }
   function terrainProfile(game, halfSpan, out) {
     const s = game.scene;
-    const arr = out || (s.__profile || (s.__profile = new Float32Array(PROFILE_N)));
-    if (!s.planet) return arr;
-    /* The detailed field, not the planetary one — at this span the planetary
-     * field is a straight line and the ground would read as a flat wall. */
+    const buf = out || profileBuf(s, '__profile');
+    buf.n = PROFILE_N;
+    if (!s.planet) return buf;
+    const epoch = s.t || 0;
     for (let i = 0; i < PROFILE_N; i++) {
       const u = i / (PROFILE_N - 1);
       const lon = s.lon + (u - 0.5) * halfSpan * 2;
-      arr[i] = RS.planet.elevationDetailAt(s.planet, lon, s.lat);
+      buf.elev[i] = RS.planet.elevationDetailAt(s.planet, lon, s.lat);
+      const r = RS.planet.biomeAt(s.planet, lon, s.lat, epoch);
+      buf.biome[i] = r.biome;
+      buf.moist[i] = r.M;
     }
-    return arr;
+    return buf;
+  }
+
+  /* Player-centred neighbourhood for the freeroam camera. Fixed 48×32 grid,
+   * never a mesh, never stored. */
+  const FREE_W = 48, FREE_H = 32;
+  function neighbourhood(game, spanLon, out) {
+    const s = game.scene;
+    const buf = out || profileBuf(s, '__hood');
+    /* Reuse the profile buffer shape but with a 2d colour table on the scene. */
+    const n = FREE_W * FREE_H;
+    if (!s.__hoodCss || s.__hoodCss.length !== n) s.__hoodCss = new Array(n);
+    if (!s.__hoodElev || s.__hoodElev.length !== n) s.__hoodElev = new Float32Array(n);
+    if (!s.planet) return { w: FREE_W, h: FREE_H, css: s.__hoodCss, elev: s.__hoodElev, spanLon: spanLon };
+    const spanLat = spanLon * (FREE_H / FREE_W);
+    const epoch = s.t || 0;
+    for (let iy = 0; iy < FREE_H; iy++) {
+      const lat = RS.planet.clampLat(s.lat - (iy / (FREE_H - 1) - 0.5) * spanLat * 2);
+      for (let ix = 0; ix < FREE_W; ix++) {
+        const lon = s.lon + (ix / (FREE_W - 1) - 0.5) * spanLon * 2;
+        const i = iy * FREE_W + ix;
+        const r = RS.planet.biomeAt(s.planet, lon, lat, epoch);
+        s.__hoodCss[i] = r.biome;
+        s.__hoodElev[i] = RS.planet.elevationDetailAt(s.planet, lon, lat);
+      }
+    }
+    return { w: FREE_W, h: FREE_H, css: s.__hoodCss, elev: s.__hoodElev, spanLon, spanLat };
+  }
+
+  /* Dual-camera rule while inhabiting a planet:
+   *   observing            → globe
+   *   altitude / toggle    → freeroam neighbourhood
+   *   near the ground      → rich side-on slice
+   * Pose (lon, lat, altitude) is shared; switching never teleports. */
+  function cameraMode(game) {
+    const s = game.scene;
+    if (!s || s.kind !== 'planet') return 'globe';
+    if (s.forceCam === 'freeroam' || s.forceCam === 'sideon' || s.forceCam === 'globe') {
+      return s.forceCam;
+    }
+    if (!game.inhabiting) return 'globe';
+    if (s.altitude > 0.22) return 'freeroam';
+    return 'sideon';
   }
 
   function tickPlanet(game, bus, dt) {
@@ -11069,14 +11410,18 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     }
     tickContact(game, bus, dt);
 
-    /* Walking moves you along the planet's longitude. The body's x velocity is
-     * in scene units; converting to radians uses the planet's actual radius,
-     * so a big world genuinely takes longer to cross. */
+    /* Walking moves you on the tangent plane. Heading × speed → (dlon, dlat)
+     * using the planet's real radius, so a big world takes longer to cross
+     * and the poles pinch longitude the way a sphere must. */
     if (game.inhabiting) {
-      const circumference = s.planet.radiusE * 6371 * TAU;   // km
-      s.lon += (game.body.vx * 0.02) / Math.max(1, circumference) * 4000 * dt;
-      s.lon = ((s.lon % TAU) + TAU) % TAU;
-      s.altitude = Math.max(0, -game.body.y);
+      const body = game.body;
+      const R = s.planet.radiusE * 6371;
+      const clat = Math.max(0.12, Math.cos(s.lat));
+      /* Same conversion the 1D longitude track used, now applied on two axes. */
+      const k = 80 / Math.max(1, R);
+      s.lon = RS.planet.wrapLon(s.lon + body.vx * k / clat * dt);
+      s.lat = RS.planet.clampLat(s.lat + (body.vz || 0) * k * dt);
+      s.altitude = Math.max(0, -body.y);
     }
     sampleSurface(game);
 
@@ -11105,8 +11450,9 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     const mind = RS.neural.mindAt(fauna.hash);
     s.agents.push({
       fauna, mind, state: RS.neural.newState(),
-      x: (Math.random() * 2 - 1) * 0.9,
-      y: 0, vx: 0, vy: 0,
+      lon: RS.planet.wrapLon(s.lon + (Math.random() * 2 - 1) * 0.04),
+      lat: RS.planet.clampLat(s.lat + (Math.random() * 2 - 1) * 0.02),
+      x: 0, y: 0, vx: 0, vy: 0, vz: 0,
       heading: Math.random() * TAU,
       energy: 0.6 + Math.random() * 0.4,
       ridden: false
@@ -11123,8 +11469,11 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     const g = p.gravity;
 
     /* Sensory gradients, all local and all cheap. */
-    const toPlayer = game.inhabiting ? (game.body.x - a.x) : 0;
-    const distPlayer = Math.abs(toPlayer);
+    const dlon = wrapDeltaLon((a.lon != null ? a.lon : s.lon) - s.lon);
+    const dlat = (a.lat != null ? a.lat : s.lat) - s.lat;
+    a.x = dlon / 0.09;
+    const toPlayer = game.inhabiting ? -a.x : 0;
+    const distPlayer = Math.hypot(dlon, dlat) / 0.09;
     /* The player reads as a threat or as kin depending on the reality field —
      * a strong field makes you legible to local life rather than alien to it. */
     const rf = game.fields ? game.fields.reality : 0;
@@ -11146,18 +11495,35 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     a.heading += out[1] * dt * 1.8;
     const drive = out[0] * power * 0.9;
     a.vx += Math.cos(a.heading) * drive * dt;
+    a.vz = (a.vz || 0) + Math.sin(a.heading) * drive * dt;
     if (a.fauna.locomotion === 'flying') a.vy += (out[2] * 0.6 - g * 0.25) * dt;
     else a.vy += g * 0.5 * dt;
 
     const f = Math.exp(-(1.4 + p.pressure * 0.4) * dt);
-    a.vx *= f; a.vy *= f;
-    a.x += a.vx * dt; a.y += a.vy * dt;
+    a.vx *= f; a.vy *= f; a.vz *= f;
+    const R = p.radiusE * 6371;
+    const k = 80 / Math.max(1, R);
+    const clat = Math.max(0.12, Math.cos(a.lat != null ? a.lat : s.lat));
+    a.lon = RS.planet.wrapLon((a.lon != null ? a.lon : s.lon) + a.vx * k / clat * dt);
+    a.lat = RS.planet.clampLat((a.lat != null ? a.lat : s.lat) + a.vz * k * dt);
+    a.y += a.vy * dt;
     if (a.y > 0) { a.y = 0; if (a.vy > 0) a.vy = 0; }
-    /* Wrap rather than despawn — the population stays around the player. */
-    if (a.x > 1.15) a.x = -1.15;
-    if (a.x < -1.15) a.x = 1.15;
+    /* Keep the live population near the player rather than wrapping a 1D strip. */
+    const ndlon = wrapDeltaLon(a.lon - s.lon);
+    const ndlat = a.lat - s.lat;
+    if (Math.hypot(ndlon, ndlat) > 0.14) {
+      a.lon = RS.planet.wrapLon(s.lon + ndlon * 0.25);
+      a.lat = RS.planet.clampLat(s.lat + ndlat * 0.25);
+    }
+    a.x = wrapDeltaLon(a.lon - s.lon) / 0.09;
 
     a.energy = clamp01(a.energy + (Math.abs(drive) * -0.05 + 0.02) * dt);
+  }
+
+  function wrapDeltaLon(d) {
+    if (d > Math.PI) d -= TAU;
+    if (d < -Math.PI) d += TAU;
+    return d;
   }
 
   // ── the player's body ────────────────────────────────────────────────────
@@ -11211,7 +11577,9 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   function nearestSense(game, s) {
     let food = 0, threat = 0, kin = 0;
     for (const a of s.agents) {
-      const d = Math.abs(a.x - game.body.x);
+      const dlon = wrapDeltaLon((a.lon != null ? a.lon : s.lon) - s.lon);
+      const dlat = (a.lat != null ? a.lat : s.lat) - s.lat;
+      const d = Math.hypot(dlon, dlat) / 0.09;
       if (d > 0.6) continue;
       const w = 1 - d / 0.6;
       if (a.fauna.diet === 'predator') threat = Math.max(threat, w);
@@ -11293,10 +11661,11 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     if (game.body.charge < 8) return { ok: false, reason: 'insufficient charge' };
 
     /* What comes out depends on where you are standing: the biome and the
-     * planet's resource profile together. */
+     * planet's resource profile together, sampled at this lon/lat. */
+    const local = RS.planet.resourceAt(s.planet, s.lon, s.lat);
     let bestId = null, bestV = 0;
-    for (const k in s.planet.resources) {
-      const v = s.planet.resources[k] * (0.6 + RS.core.hashF(hashN(s.planet.hash, Math.round(s.lon * 40)), 3) * 0.8);
+    for (const k in local) {
+      const v = local[k];
       if (v > bestV) { bestV = v; bestId = k; }
     }
     if (!bestId) return { ok: false, reason: 'nothing here' };
@@ -11337,8 +11706,9 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     TIER_PLANET, TIER_STELLAR, TIER_SYSTEM, TIER_CELL, TIER_QUANTUM, TIER_GROUP, TIER_HUBBLE, TIER_ENSEMBLE, TIER_ATOMIC, TIER_MOLECULAR,
     SCENES, SCENE_BY_ID, sceneForTier, tierForScene, newScene, systemAddrFrom, systemKey, enterSystem, selectBody,
     derivePlanet, mostInteresting, tick, systemPositions, terrainProfile,
-    sampleSurface, embark, disembark, extract, sell, PROFILE_N,
-    TIER_CLUSTER, civAt, tickContact
+    neighbourhood, cameraMode, sampleSurface, embark, disembark, extract, sell, PROFILE_N,
+    FREE_W, FREE_H,
+    TIER_CLUSTER, civAt, tickContact, wrapDeltaLon
   };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));
 
@@ -14210,6 +14580,10 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       drawReticle(ctx, game, t);
       drawCentre(ctx, game, t, spec);
 
+      if (game.inhabiting && game.body && !inFoam && RS.worldrender && RS.worldrender.drawVesselGlyph) {
+        RS.worldrender.drawVesselGlyph(ctx, game, sx(game.body.x), sy(game.body.y));
+      }
+
       /* The live primitives for whatever you are working on, stacked in the
        * gap between the reticle and the instruments. Anchored to the viewport
        * rather than to the node: a readout that chases a drifting node is
@@ -14456,6 +14830,15 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       if (e.body.kind === 'belt') { drawBelt(ctx, s, e, scr); continue; }
       drawWorld(ctx, game, s, e, scr, t);
     }
+
+    /* Embodied courier / lander sits on the orbital plane at the Σ radius. */
+    if (game.inhabiting && game.body) {
+      const rr = s.radius != null ? radiusMap(s, s.radius) : 0.5;
+      const ang = s.orbitAngle || 0;
+      const X = cx + Math.cos(ang) * px(rr);
+      const Y = cy + Math.sin(ang) * px(rr) * 0.62;
+      drawVesselGlyph(ctx, game, X, Y);
+    }
   }
 
   function bodyScreen(scene, e) {
@@ -14563,8 +14946,9 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     const s = game.scene;
     const p = s.planet;
     if (!p) return;
-    const high = s.altitude > 0.35 || !game.inhabiting;
-    if (high) drawGlobe(ctx, game, p, s);
+    const mode = RS.scenes.cameraMode(game);
+    if (mode === 'globe') drawGlobe(ctx, game, p, s);
+    else if (mode === 'freeroam') drawFreeroam(ctx, game, p, s);
     else drawSurface(ctx, game, p, s);
   }
 
@@ -14751,7 +15135,6 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   function drawSurface(ctx, game, p, s) {
     const w = V().w, h = V().h;
     const horizon = V().cy + px(0.35);
-    const sea = RS.planet.seaLevel(p);
     const surf = s.surface || {};
 
     // ── sky ──
@@ -14841,34 +15224,70 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
      * uses — mixing the two fields here would float the body above the hill it
      * is standing on. */
     const base = RS.planet.elevationDetailAt(p, s.lon, s.lat);
+    const water = (surf.sea != null) ? surf.sea : RS.localtime.waterlineAt(p, s.lon, s.t || 0);
 
-    /* Water, if the local ground is below sea level. */
+    /* Far/near parallax bands — same heightfield, wider then tighter span, so
+     * the horizon has depth without a second mesh. */
+    const far = RS.scenes.terrainProfile(game, span * 2.2, profileBuf(s, '__profileFar'));
+    drawSilhouette(ctx, far, n, w, h, horizon, base, vscale * 0.42, 0.28, p, s, true);
+
+    // ── weather veil ──
+    const press = clamp01(p.pressure / 2.4);
+    if (press > 0.04) {
+      ctx.fillStyle = hsl(aHue, 0.25, 0.55, press * (0.04 + (1 - day) * 0.08));
+      ctx.fillRect(0, 0, w, horizon);
+    }
+
+    /* Water, if the local ground is below the live (tide-aware) waterline. */
     if (p.hydrosphere > 0) {
-      const wy = horizon + (base - sea) * vscale;
+      const wy = horizon + (base - water) * vscale;
       if (wy < h) {
         const wg = ctx.createLinearGradient(0, wy, 0, h);
         wg.addColorStop(0, hsl(200, 0.6, 0.34, 0.85));
         wg.addColorStop(1, hsl(210, 0.7, 0.14, 0.95));
         ctx.fillStyle = wg;
         ctx.fillRect(0, wy, w, h - wy);
+        /* Splash at the tide line — denser when the tide is running. */
+        const tideH = s.clock && s.clock.tide ? s.clock.tide.height : 0;
+        if (tideH > 0.04) {
+          ctx.fillStyle = hsl(195, 0.45, 0.85, 0.18 + tideH * 0.35);
+          for (let i = 0; i < 18; i++) {
+            const sx0 = RS.core.hashF(p.hash, 90 + i) * w;
+            const bob = Math.sin((s.t || 0) * 40 + i) * 3;
+            ctx.fillRect(sx0, wy - 2 + bob, 3, 3);
+          }
+        }
       }
     }
 
-    ctx.beginPath();
-    ctx.moveTo(0, h);
-    for (let i = 0; i < n; i++) {
-      const x = (i / (n - 1)) * w;
-      const y = horizon + (base - prof[i]) * vscale;
-      ctx.lineTo(x, y);
+    /* Multi-biome land: one trapezoid per profile sample, 96 fills, fixed. */
+    for (let i = 0; i < n - 1; i++) {
+      const x0 = (i / (n - 1)) * w;
+      const x1 = ((i + 1) / (n - 1)) * w;
+      const y0 = horizon + (base - prof.elev[i]) * vscale;
+      const y1 = horizon + (base - prof.elev[i + 1]) * vscale;
+      const b = prof.biome[i] || surf.biome || RS.planet.BIOME_BY_ID.regolith;
+      ctx.beginPath();
+      ctx.moveTo(x0, h); ctx.lineTo(x0, y0); ctx.lineTo(x1, y1); ctx.lineTo(x1, h);
+      ctx.closePath();
+      const tg = ctx.createLinearGradient(0, Math.min(y0, y1) - px(0.05), 0, h);
+      tg.addColorStop(0, hsl(b.hue, b.sat, b.lum * 1.15, 1));
+      tg.addColorStop(1, hsl(b.hue - 8, b.sat * 0.8, b.lum * 0.4, 1));
+      ctx.fillStyle = tg;
+      ctx.fill();
     }
-    ctx.lineTo(w, h);
-    ctx.closePath();
-    const b = surf.biome || RS.planet.BIOME_BY_ID.regolith;
-    const tg = ctx.createLinearGradient(0, horizon - px(0.2), 0, h);
-    tg.addColorStop(0, hsl(b.hue, b.sat, b.lum * 1.15, 1));
-    tg.addColorStop(1, hsl(b.hue - 8, b.sat * 0.8, b.lum * 0.4, 1));
-    ctx.fillStyle = tg;
-    ctx.fill();
+
+    /* Dust / weather particles scaled by pressure. A vacuum has none. */
+    if (press > 0.08 && day > 0.15) {
+      const nDust = Math.round(22 * press);
+      ctx.fillStyle = hsl(38, 0.25, 0.7, 0.18 * press);
+      for (let i = 0; i < nDust; i++) {
+        const u = RS.core.hashF(p.hash, 200 + i);
+        const x = ((u + (s.t || 0) * 0.015 * (0.4 + press)) % 1) * w;
+        const y = horizon * (0.3 + RS.core.hashF(p.hash, 400 + i) * 0.7);
+        ctx.fillRect(x, y, 1.6, 1.6);
+      }
+    }
 
     /* A rim light along the horizon line reads as atmosphere scattering and
      * separates ground from sky far better than a hard edge. */
@@ -14877,23 +15296,48 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     ctx.beginPath();
     for (let i = 0; i < n; i++) {
       const x = (i / (n - 1)) * w;
-      const y = horizon + (base - prof[i]) * vscale;
+      const y = horizon + (base - prof.elev[i]) * vscale;
       i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
     }
     ctx.stroke();
 
     // ── agents ──
-    for (const a of s.agents) drawAgent(ctx, game, a, horizon, vscale, base, prof, n, w);
+    for (const a of s.agents) drawAgent(ctx, game, a, horizon, vscale, base, prof.elev, n, w);
 
     // ── the player's body ──
     drawBody(ctx, game, horizon, vscale, base, w);
+  }
+
+  function profileBuf(s, key) {
+    return s[key] || (s[key] = {
+      elev: new Float32Array(RS.scenes.PROFILE_N),
+      moist: new Float32Array(RS.scenes.PROFILE_N),
+      biome: new Array(RS.scenes.PROFILE_N),
+      n: RS.scenes.PROFILE_N
+    });
+  }
+
+  function drawSilhouette(ctx, prof, n, w, h, horizon, base, vscale, alpha, p, s, far) {
+    ctx.beginPath();
+    ctx.moveTo(0, h);
+    for (let i = 0; i < n; i++) {
+      const x = (i / (n - 1)) * w;
+      const y = horizon + (base - prof.elev[i]) * vscale + (far ? px(0.08) : 0);
+      ctx.lineTo(x, y);
+    }
+    ctx.lineTo(w, h);
+    ctx.closePath();
+    const b = (s.surface && s.surface.biome) || RS.planet.BIOME_BY_ID.regolith;
+    ctx.fillStyle = hsl(b.hue, b.sat * 0.7, b.lum * 0.55, alpha);
+    ctx.fill();
   }
 
   function groundAt(prof, n, w, screenX) {
     const u = clamp01(screenX / w);
     const fi = u * (n - 1);
     const i0 = Math.floor(fi), i1 = Math.min(n - 1, i0 + 1);
-    return lerp(prof[i0], prof[i1], fi - i0);
+    const elev = prof.elev || prof;
+    return lerp(elev[i0], elev[i1], fi - i0);
   }
 
   function drawAgent(ctx, game, a, horizon, vscale, base, prof, n, w) {
@@ -14982,14 +15426,101 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 
   function drawBody(ctx, game, horizon, vscale, base, w) {
     const body = game.body;
+    const X = w * 0.5;
+    const Y = horizon + body.y * vscale * 0.35;
+    drawVesselGlyph(ctx, game, X, Y);
+  }
+
+  /* ── Freeroam neighbourhood ───────────────────────────────────────────────
+   *
+   * A player-centred disc of biome-coloured samples. Fixed 48×32 budget, not
+   * a mesh. Zoom opens with altitude / Σ so climbing shows more of the sphere
+   * without sampling more cells. */
+  const biomeColCache = new Map();
+  const BIOME_COL_MAX = 2400;
+
+  function biomeCached(p, lon, lat, epoch) {
+    const lonBin = Math.floor(RS.planet.wrapLon(lon) / TAU * 192);
+    const latBin = Math.floor(clamp((lat + Math.PI / 2) / Math.PI, 0, 0.999) * 96);
+    const key = (p.hash >>> 0) + ':' + lonBin + ':' + latBin;
+    let b = biomeColCache.get(key);
+    if (b) return b;
+    b = RS.planet.biomeAt(p, lon, lat, epoch).biome;
+    if (biomeColCache.size >= BIOME_COL_MAX) biomeColCache.clear();
+    biomeColCache.set(key, b);
+    return b;
+  }
+
+  let hoodCanvas = null, hoodKey = '';
+
+  function drawFreeroam(ctx, game, p, s) {
+    const w = V().w, h = V().h;
+    const span = 0.16 * (1 + s.altitude * 2.4);
+    const FW = RS.scenes.FREE_W, FH = RS.scenes.FREE_H;
+    const spanLat = span * (FH / FW);
+    const epoch = s.t || 0;
+    const lonBin = Math.floor(RS.planet.wrapLon(s.lon) / TAU * 256);
+    const latBin = Math.floor(clamp((s.lat + Math.PI / 2) / Math.PI, 0, 0.999) * 128);
+    const key = (p.hash >>> 0) + '|' + w + 'x' + h + '|' + lonBin + '|' + latBin + '|' + Math.round(span * 200);
+
+    if (!hoodCanvas) hoodCanvas = document.createElement('canvas');
+    if (hoodCanvas.width !== w || hoodCanvas.height !== h) {
+      hoodCanvas.width = w; hoodCanvas.height = h;
+      hoodKey = '';
+    }
+    if (hoodKey !== key) {
+      const g = hoodCanvas.getContext('2d');
+      const cellW = w / FW, cellH = h / FH;
+      const dat = RS.planet.datum(p);
+      g.fillStyle = 'rgba(4,8,14,0.92)';
+      g.fillRect(0, 0, w, h);
+      for (let iy = 0; iy < FH; iy++) {
+        const lat = RS.planet.clampLat(s.lat - (iy / (FH - 1) - 0.5) * spanLat * 2);
+        for (let ix = 0; ix < FW; ix++) {
+          const lon = s.lon + (ix / (FW - 1) - 0.5) * span * 2;
+          const b = biomeCached(p, lon, lat, epoch);
+          const elev = RS.planet.elevationAt(p, lon, lat);
+          const relief = clamp(0.78 + (elev - dat) * 0.4, 0.5, 1.35);
+          g.fillStyle = hsl(b.hue, b.sat, clamp01(b.lum * relief), 1);
+          g.fillRect(Math.floor(ix * cellW), Math.floor(iy * cellH), Math.ceil(cellW) + 1, Math.ceil(cellH) + 1);
+        }
+      }
+      hoodKey = key;
+    }
+    ctx.drawImage(hoodCanvas, 0, 0);
+
+    /* Agents in world lon/lat. */
+    for (const a of s.agents) {
+      const dlon = RS.scenes.wrapDeltaLon((a.lon != null ? a.lon : s.lon) - s.lon);
+      const dlat = (a.lat != null ? a.lat : s.lat) - s.lat;
+      const X = w * 0.5 + (dlon / (span * 2)) * w;
+      const Y = h * 0.5 - (dlat / (spanLat * 2)) * h;
+      if (X < -8 || X > w + 8 || Y < -8 || Y > h + 8) continue;
+      ctx.fillStyle = hsl(a.fauna.hue, 0.6, a.ridden ? 0.78 : 0.55, 0.95);
+      ctx.beginPath(); ctx.arc(X, Y, 3.2, 0, TAU); ctx.fill();
+    }
+
+    drawVesselGlyph(ctx, game, w * 0.5, h * 0.5);
+    /* Heading tick so the map reads as a body, not a cursor. */
+    const body = game.body;
+    const hd = body.heading || 0;
+    ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(w * 0.5, h * 0.5);
+    ctx.lineTo(w * 0.5 + Math.cos(hd) * 16, h * 0.5 - Math.sin(hd) * 16);
+    ctx.stroke();
+  }
+
+  function drawVesselGlyph(ctx, game, X, Y) {
+    const body = game.body;
+    if (!body) return;
     const arch = RS.vessel.archOf(body);
-    const X = w * 0.5 + body.x * 0;   // the player stays centred; the world moves
-    const Y = horizon + (base - base) * vscale + body.y * vscale * 0.35;
     const size = px(0.022);
 
     ctx.save();
-    ctx.translate(X, Y - size);
-    ctx.rotate(Math.sin(game.scene.t * 60) * 0.02 + body.heading * 0.06);
+    ctx.translate(X, Y - size * 0.15);
+    ctx.rotate(Math.sin((game.scene.t || 0) * 60) * 0.02 + (body.heading || 0) * 0.06);
 
     const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, size * 3.2);
     glow.addColorStop(0, hsl(arch.hue, 0.8, 0.8, 0.5));
@@ -15005,18 +15536,17 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     ctx.fillText(arch.glyph, 0, 0);
     ctx.restore();
 
-    /* Charge ring under the body — always visible, never a menu item. */
     const cf = body.charge / arch.capacity;
     ctx.strokeStyle = hsl(cf > 0.25 ? 160 : 0, 0.85, 0.6, 0.8);
     ctx.lineWidth = 2.2;
     ctx.beginPath();
-    ctx.arc(X, Y - size, size * 2.1, -Math.PI / 2, -Math.PI / 2 + TAU * clamp01(cf));
+    ctx.arc(X, Y - size * 0.15, size * 2.1, -Math.PI / 2, -Math.PI / 2 + TAU * clamp01(cf));
     ctx.stroke();
   }
 
   RS.worldrender = { drawSystem, drawPlanet, radiusMap, bodyScreen, atmosphereHue,
-    globeTexture, globeDisc,
-    clearTextureCache() { texCache.clear(); discCanvas = null; discKey = ''; } };
+    globeTexture, globeDisc, drawVesselGlyph, drawFreeroam,
+    clearTextureCache() { texCache.clear(); discCanvas = null; discKey = ''; biomeColCache.clear(); hoodCanvas = null; hoodKey = ''; } };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));
 
 </script>
@@ -16326,10 +16856,15 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
         '<div class="ro-sub">' + p.type.name + ' &middot; ' + p.gravity.toFixed(2) + ' g &middot; ' +
         (p.pressure < 0.01 ? 'no air' : p.pressure.toFixed(2) + ' bar') + '</div>' +
         (su ? '<div class="ro-sub" style="margin-top:4px;color:' + hsl(su.biome.hue, 0.6, 0.7) + '">' +
-          su.biome.name + ' &middot; ' + Math.round(su.T) + ' K &middot; lat ' +
-          (su.lat * 57.3).toFixed(0) + '&deg;</div>' : '') +
+          su.biome.name + ' &middot; ' + Math.round(su.T) + ' K &middot; ' +
+          (su.lon * 57.3).toFixed(0) + '&deg;,' + (su.lat * 57.3).toFixed(0) + '&deg;</div>' : '') +
         (when ? '<div class="ro-sub" style="margin-top:4px;color:' +
-          hsl(s.clock.sun.daylight > 0.5 ? 45 : 220, 0.55, 0.68) + '">' + when + '</div>' : '') +
+          hsl(s.clock.sun.daylight > 0.5 ? 45 : 220, 0.55, 0.68) + '">' + when +
+          (s.clock.tide && s.clock.tide.count ? ' &middot; tide ' + (s.clock.tide.height * 100).toFixed(0) + '%' : '') +
+          '</div>' : '') +
+        (game.inhabiting ? '<div class="ro-sub" style="margin-top:4px">' +
+          RS.scenes.cameraMode(game) + (s.altitude > 0.01 ? ' &middot; alt ' + s.altitude.toFixed(2) : '') +
+          '</div>' : '') +
         (s.agents.length ? '<div class="ro-sub" style="margin-top:4px">' + s.agents.length +
           ' minds nearby</div>' : '');
       return;
@@ -18101,6 +18636,45 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     return { ok: true, json };
   }
 
+  function dumpUnderfoot(game) {
+    const s = game.scene;
+    if (!s || !s.planet) return { ok: false, reason: 'not on a planet' };
+    RS.scenes.sampleSurface(game);
+    const su = s.surface;
+    const line = (s.planet.name || 'world') +
+      ' lon ' + (s.lon * 57.3).toFixed(2) +
+      ' lat ' + (s.lat * 57.3).toFixed(2) +
+      ' elev ' + (su ? su.elev.toFixed(3) : '?') +
+      ' biome ' + (su && su.biome ? su.biome.id : '?') +
+      ' cam ' + RS.scenes.cameraMode(game);
+    return { ok: true, json: line, dump: line };
+  }
+
+  function teleport(game, lonLat) {
+    const s = game.scene;
+    if (!s || s.kind !== 'planet') return { ok: false, reason: 'not on a planet' };
+    const parts = String(lonLat || '0,0').split(',');
+    const lonDeg = parseFloat(parts[0]), latDeg = parseFloat(parts[1]);
+    if (!Number.isFinite(lonDeg) || !Number.isFinite(latDeg)) {
+      return { ok: false, reason: 'lon,lat degrees' };
+    }
+    s.lon = RS.planet.wrapLon(lonDeg * Math.PI / 180);
+    s.lat = RS.planet.clampLat(latDeg * Math.PI / 180);
+    RS.scenes.sampleSurface(game);
+    return { ok: true, lon: s.lon, lat: s.lat };
+  }
+
+  function setCam(game, mode) {
+    const s = game.scene;
+    if (!s) return { ok: false, reason: 'no scene' };
+    if (mode === 'auto') { s.forceCam = null; return { ok: true, forceCam: null }; }
+    if (mode !== 'freeroam' && mode !== 'sideon' && mode !== 'globe') {
+      return { ok: false, reason: 'unknown camera' };
+    }
+    s.forceCam = mode;
+    return { ok: true, forceCam: mode };
+  }
+
   const ACTIONS = {
     'insight-1k': (g) => grantInsight(g, 1000),
     'insight-100k': (g) => grantInsight(g, 100000),
@@ -18119,13 +18693,16 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     'preset-endgame': (g, b) => presetEndgame(g, b),
     'save-now': (g) => forceSave(g),
     'save-wipe': () => wipeSave(),
-    'save-dump': (g) => dumpSave(g)
+    'save-dump': (g) => dumpSave(g),
+    'dump-underfoot': (g) => dumpUnderfoot(g)
   };
 
   function run(game, bus, action, arg) {
     if (!game) return { ok: false, reason: 'no game' };
     if (action === 'jump') return jumpScene(game, bus, arg);
     if (action === 'phi') return snapPhi(game, arg);
+    if (action === 'teleport') return teleport(game, arg);
+    if (action === 'cam') return setCam(game, arg);
     const fn = ACTIONS[action];
     if (!fn) return { ok: false, reason: 'unknown action' };
     return fn(game, bus);
@@ -18193,6 +18770,18 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       btn('save-dump', 'Dump JSON') +
       '</div></section>';
 
+    h += '<section><h4>Planet</h4><div class="dbg-row">' +
+      btn('teleport', 'Eq 0,0', '0,0') +
+      btn('teleport', 'N pole', '0,88') +
+      btn('teleport', 'S pole', '0,-88') +
+      btn('teleport', 'Antimeridian', '179,10') +
+      btn('cam', 'Side-on', 'sideon') +
+      btn('cam', 'Freeroam', 'freeroam') +
+      btn('cam', 'Globe', 'globe') +
+      btn('cam', 'Cam auto', 'auto') +
+      btn('dump-underfoot', 'Dump underfoot') +
+      '</div></section>';
+
     h += '<p class="dbg-hint">Toggle with <kbd>`</kbd> · gated (localhost / ?debug=1 / localStorage)</p>';
     return h;
   }
@@ -18200,7 +18789,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   RS.debug = {
     enabled, run, panelHTML, statusLine, SCENE_JUMPS,
     grantInsight, maxDials, maxStrike, unlockAll, unlockAllResearch,
-    jumpScene, snapPhi, ensureReach
+    jumpScene, snapPhi, ensureReach, teleport, setCam, dumpUnderfoot
   };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));
 
