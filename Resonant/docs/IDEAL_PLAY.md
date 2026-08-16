@@ -46,10 +46,9 @@ the price of touching the thing they are looking at.
 
 They embark. The reticle is on ground a walker can stand on — or the game
 refuses with a *destination* (“this is ocean; the shore is east” / “take the
-swimmer”). Side-on shows a hill, a biome name they can read, something moving
-that is not them. They tap the ground and the patch answers (pulse). They
-press C and the neighbourhood is the same place from above, not a different
-planet.
+swimmer”). The globe shows a hill, a biome name they can read, something moving
+that is not them. They tap the ground and the patch answers (pulse). Σ pulls
+back to see more of the same sphere — not a different planet.
 
 They leave the body. τ scrubs two million years. The biosphere is not the
 one they walked. They understand the modal split without being told the
@@ -231,7 +230,7 @@ the objective *point at*.
 
 **Do**
 
-- When an extractor is sited, the globe / side-on / neighbourhood should
+- When an extractor is sited, the globe should show a mark at that lon/lat.
   mark that patch (a glyph on the existing samples, not a new mesh).
 - The topbar rate, if it includes extractors, should be expandable to
   “seams +X from *this* world” in the world panel (the panel already has
@@ -260,19 +259,17 @@ the objective *point at*.
 - Autocomplete the codex. Insight cannot buy this pathway; that is the
   point.
 
-### P8 — Camera literacy without a manual
+### P8 — On the globe (done)
 
 **Do**
 
-- The first time inhabiting a planet, the scene tag should look pressable
-  and the objective may say “C switches SIDE-ON and MAP; the ground is the
-  same.”
-- Auto-switch at altitude 0.22 is fine if the tag *changes* in a way the
-  eye catches (it already appends the mode). A one-shot toast is enough.
+- The first time inhabiting a planet, toast: you never leave the planet
+  picture; Σ frames height; tap surveys.
 
 **Do not**
 
 - Bind camera to the same tap as pulse.
+- Bring back side-on / MAP as player-facing cameras.
 
 ---
 

@@ -69,15 +69,6 @@
     el['btn-contact'].addEventListener('click', () => toggleDrawer(game, bus, 'contact'));
     el['btn-drawer-close'].addEventListener('click', () => closeDrawer());
 
-    /* Scene tag is the player-facing camera cycle while piloting a planet. */
-    if (el['scene-tag']) {
-      el['scene-tag'].addEventListener('click', () => {
-        if (!game.inhabiting || !game.scene || game.scene.kind !== 'planet') return;
-        const r = RS.scenes.cycleCamera(game);
-        if (r.ok) bus.emit('scene:camera', { forceCam: r.forceCam, mode: r.mode });
-      });
-    }
-
     el['drawer-tabs'].addEventListener('click', ev => {
       const t = ev.target.closest('[data-tab]');
       if (t) { lastTab = t.dataset.tab; openDrawer(game, bus, t.dataset.tab); }
@@ -364,9 +355,9 @@
     el['scene-tag'].style.color = game.inhabiting ? '#fca5a5' : '#7dd3fc';
     if (el['scene-tag']) {
       el['scene-tag'].title = (s.kind === 'planet' && game.inhabiting)
-        ? 'Tap or press C to cycle SIDE-ON / MAP / AUTO'
+        ? 'You are on the globe. Tap the ground to survey a seam.'
         : '';
-      el['scene-tag'].style.cursor = (s.kind === 'planet' && game.inhabiting) ? 'pointer' : 'default';
+      el['scene-tag'].style.cursor = 'default';
     }
 
     renderBodyBar(game);

@@ -195,6 +195,15 @@
       RS.audio.updateBed(game.scene.kind,
         game.scene.planet ? game.scene.planet.pressure : 0);
 
+      if (game.inhabiting && game.body && RS.audio.updateMachinery) {
+        const arch = RS.vessel.archOf(game.body);
+        const ctl = RS.vessel.controlsFrom(game);
+        const spd = Math.hypot(game.body.vx || 0, game.body.vy || 0, game.body.vz || 0);
+        RS.audio.updateMachinery(arch.id, ctl.rate, spd);
+      } else if (RS.audio.updateMachinery) {
+        RS.audio.updateMachinery('mote', 0, 0);
+      }
+
       const n = inField ? game.focusNode : null;
       RS.audio.updateRamp(n ? n.coherence : 0, n ? n.man.bandIndex : band.index, n);
 

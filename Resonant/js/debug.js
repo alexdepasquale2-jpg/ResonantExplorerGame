@@ -244,8 +244,8 @@
     const s = game.scene;
     if (!s) return { ok: false, reason: 'no scene' };
     if (mode === 'auto') { s.forceCam = null; return { ok: true, forceCam: null }; }
-    if (mode !== 'freeroam' && mode !== 'sideon' && mode !== 'globe') {
-      return { ok: false, reason: 'unknown camera' };
+    if (mode !== 'globe') {
+      return { ok: false, reason: 'only globe camera' };
     }
     s.forceCam = mode;
     return { ok: true, forceCam: mode };
@@ -351,8 +351,6 @@
       btn('teleport', 'N pole', '0,88') +
       btn('teleport', 'S pole', '0,-88') +
       btn('teleport', 'Antimeridian', '179,10') +
-      btn('cam', 'Side-on', 'sideon') +
-      btn('cam', 'Freeroam', 'freeroam') +
       btn('cam', 'Globe', 'globe') +
       btn('cam', 'Cam auto', 'auto') +
       btn('dump-underfoot', 'Dump underfoot') +

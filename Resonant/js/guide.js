@@ -123,10 +123,9 @@
       '</div></section>';
 
     if (sc.kind === 'planet') {
-      h += '<section><h3>Two cameras, one sphere</h3>' +
-        '<p class="blurb">Near the ground is the side-on slice. Climb, tap the scene tag, ' +
-        'or press <b>C</b> for the neighbourhood map. Pose is shared — switching never teleports. ' +
-        'Tap the ground to <b>pulse</b> a seam (the field\'s strike, on a world). ' +
+      h += '<section><h3>On the globe</h3>' +
+        '<p class="blurb">Observing and inhabiting use the same planet picture. ' +
+        'Σ frames height of attention on the disc. Tap the ground to <b>pulse</b> a seam. ' +
         'A sited extractor actually pays idle Ψ from that world\'s richest resource.</p></section>';
     }
     if (game.inhabiting && RS.vessel.archOf(game.body).id === 'symbiont') {

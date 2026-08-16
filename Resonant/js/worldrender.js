@@ -266,10 +266,7 @@
     const s = game.scene;
     const p = s.planet;
     if (!p) return;
-    const mode = RS.scenes.cameraMode(game);
-    if (mode === 'globe') drawGlobe(ctx, game, p, s);
-    else if (mode === 'freeroam') drawFreeroam(ctx, game, p, s);
-    else drawSurface(ctx, game, p, s);
+    drawGlobe(ctx, game, p, s, dt);
   }
 
   /* ── Globe texture cache ──────────────────────────────────────────────────
@@ -370,9 +367,118 @@
   /* Orbital view: the planet as a disc, sampled from the baked surface table.
    * The sample count is fixed, so this costs the same on every world. */
   const GLOBE_N = 46;
-  function drawGlobe(ctx, game, p, s) {
+  function attentionOf(game) {
+    if (!game.inhabiting || !game.dials) return 0.5;
+    const D = game.dials.space;
+    return clamp01((D.value - D.min) / Math.max(1e-6, D.max - D.min));
+  }
+
+  function globeProject(s, lon, lat, cx, cy, R) {
+    const dlon = RS.scenes.wrapDeltaLon(lon - s.lon);
+    if (Math.abs(dlon) > Math.PI * 0.52) return null;
+    return {
+      x: cx + Math.sin(dlon) * R * Math.cos(lat),
+      y: cy - Math.sin(lat) * R
+    };
+  }
+
+  function drawUnderfootApron(ctx, game, p, s, pinX, pinY, R, attention) {
+    const halfSpan = 0.032 + (1 - attention) * 0.058;
+    const prof = RS.scenes.terrainProfile(game, halfSpan);
+    const n = prof.n;
+    const body = game.body;
+    const heading = body ? body.heading : 0;
+    const mid = Math.floor(n / 2);
+    const base = prof.elev[mid];
+    const fanR = R * (0.11 + (1 - attention) * 0.09);
+    const vscale = px(0.07) * (0.55 + (1 - attention) * 0.85);
+    const dat = RS.planet.datum(p);
+
+    ctx.save();
+    ctx.translate(pinX, pinY);
+    ctx.rotate(heading);
+    ctx.globalAlpha = 0.55 + (1 - attention) * 0.35;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    for (let i = 0; i < n; i++) {
+      const u = (i / (n - 1)) - 0.5;
+      const ang = u * Math.PI * 0.62;
+      const elev = prof.elev[i] - base;
+      const r = fanR * (0.25 + Math.abs(u) * 1.5);
+      const x = Math.sin(ang) * r;
+      const y = -Math.cos(ang) * r - elev * vscale;
+      ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    const surf = prof.biome[mid] || RS.planet.BIOME_BY_ID.regolith;
+    const tg = ctx.createRadialGradient(0, -fanR * 0.2, 0, 0, 0, fanR * 1.4);
+    tg.addColorStop(0, hsl(surf.hue, surf.sat, surf.lum * 1.1, 0.92));
+    tg.addColorStop(1, hsl(surf.hue - 6, surf.sat * 0.7, surf.lum * 0.35, 0.75));
+    ctx.fillStyle = tg;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.32)';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+      const u = (i / (n - 1)) - 0.5;
+      const ang = u * Math.PI * 0.62;
+      const elev = prof.elev[i] - base;
+      const r = fanR * (0.25 + Math.abs(u) * 1.5);
+      const x = Math.sin(ang) * r;
+      const y = -Math.cos(ang) * r - elev * vscale;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    for (let i = 2; i < n - 2; i += 3) {
+      const b = prof.biome[i];
+      if (!b || prof.elev[i] < dat - 0.02) continue;
+      const u = (i / (n - 1)) - 0.5;
+      const ang = u * Math.PI * 0.62;
+      const elev = prof.elev[i] - base;
+      const r = fanR * (0.25 + Math.abs(u) * 1.5);
+      const x = Math.sin(ang) * r;
+      const y = -Math.cos(ang) * r - elev * vscale;
+      if (b.id === 'forest' || b.id === 'jungle' || b.id === 'grass') {
+        ctx.strokeStyle = hsl(b.hue, 0.5, 0.28, 0.7);
+        ctx.lineWidth = 1.1;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + (RS.core.hashF(p.hash, i) - 0.5) * 2.5, y - 4 - RS.core.hashF(p.hash, i + 40) * 5);
+        ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
+  function drawAgentsOnGlobe(ctx, game, p, s, cx, cy, R) {
+    if (!s.agents || !s.agents.length) return;
+    for (let i = 0; i < s.agents.length; i++) {
+      const a = s.agents[i];
+      const pt = globeProject(s, a.lon, a.lat, cx, cy, R);
+      if (!pt) continue;
+      const f = a.fauna;
+      const hue = f ? f.hue : 120;
+      const size = px(0.012);
+      ctx.fillStyle = hsl(hue, 0.65, 0.55, 0.85);
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, size, 0, TAU);
+      ctx.fill();
+      if (a.ridden) {
+        ctx.strokeStyle = hsl(340, 0.9, 0.72, 0.6);
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, size * 2.4, 0, TAU);
+        ctx.stroke();
+      }
+    }
+  }
+
+  function drawGlobe(ctx, game, p, s, dt) {
     const cx = V().cx, cy = V().cy;
-    const R = px(0.62);
+    const attention = attentionOf(game);
+    const zoom = game.inhabiting ? lerp(1.04, 1.14, attention) : 1;
+    const R = px(0.62) * zoom;
 
     /* Space behind. */
     ctx.fillStyle = 'rgba(3,5,10,0.55)';
@@ -455,14 +561,26 @@
       }
     }
 
-    /* Landing reticle at the current lon/lat. */
-    const rx = cx, ry = cy - Math.sin(s.lat) * R;
-    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
-    ctx.lineWidth = 1.2;
-    ctx.beginPath(); ctx.arc(rx, ry, 7, 0, TAU); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(rx - 12, ry); ctx.lineTo(rx - 8, ry);
-    ctx.moveTo(rx + 8, ry); ctx.lineTo(rx + 12, ry); ctx.stroke();
+    /* Landing reticle while observing; you are the pin while inhabiting. */
+    if (!game.inhabiting) {
+      const rx = cx, ry = cy - Math.sin(s.lat) * R;
+      ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.arc(rx, ry, 7, 0, TAU); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(rx - 12, ry); ctx.lineTo(rx - 8, ry);
+      ctx.moveTo(rx + 8, ry); ctx.lineTo(rx + 12, ry); ctx.stroke();
+    }
+
     drawExtractorMarks(ctx, game, p, s, 'globe', { cx, cy, R });
+
+    if (game.inhabiting && game.body) {
+      const pinX = cx;
+      const pinY = cy + R * (0.30 - attention * 0.06);
+      drawUnderfootApron(ctx, game, p, s, pinX, pinY, R, attention);
+      drawAgentsOnGlobe(ctx, game, p, s, cx, cy, R);
+      const vscale = lerp(1.35, 0.72, attention);
+      drawVesselGlyph(ctx, game, pinX, pinY, vscale);
+    }
   }
 
   function extractorsOn(game, p) {
@@ -501,30 +619,6 @@
         const X = view.cx + Math.sin(dlon) * view.R * Math.cos(lat);
         const Y = view.cy - Math.sin(lat) * view.R;
         ctx.font = '700 ' + Math.round(8 + m * 6) + 'px system-ui, sans-serif';
-        ctx.fillText(glyph, X, Y);
-      } else if (mode === 'sideon') {
-        const span = 0.09 + s.altitude * 0.9;
-        const dlon = wrap(lon - s.lon);
-        if (Math.abs(dlon) > span) continue;
-        const w = V().w;
-        const horizon = V().cy + px(0.35);
-        const X = (0.5 + dlon / (span * 2)) * w;
-        const elev = RS.planet.elevationDetailAt(p, lon, lat);
-        const base = RS.planet.elevationDetailAt(p, s.lon, s.lat);
-        const Y = horizon + (base - elev) * px(0.5) - (6 + m * 10);
-        ctx.font = '700 ' + Math.round(10 + m * 8) + 'px system-ui, sans-serif';
-        ctx.fillText(glyph, X, Y);
-      } else if (mode === 'freeroam') {
-        const w = V().w, h = V().h;
-        const span = 0.16 * (1 + s.altitude * 2.4);
-        const FW = RS.scenes.FREE_W, FH = RS.scenes.FREE_H;
-        const spanLat = span * (FH / FW);
-        const dlon = wrap(lon - s.lon);
-        const dlat = lat - s.lat;
-        if (Math.abs(dlon) > span || Math.abs(dlat) > spanLat) continue;
-        const X = w * 0.5 + (dlon / (span * 2)) * w;
-        const Y = h * 0.5 - (dlat / (spanLat * 2)) * h;
-        ctx.font = '700 ' + Math.round(11 + m * 7) + 'px system-ui, sans-serif';
         ctx.fillText(glyph, X, Y);
       }
     }
@@ -999,15 +1093,127 @@
     ctx.stroke();
   }
 
-  function drawVesselGlyph(ctx, game, X, Y) {
+  function drawVesselSilhouette(ctx, arch, body, size, hue) {
+    const id = arch.id;
+    const phase = body.gaitPhase || body.strokePhase || 0;
+    const bank = body.bank || 0;
+    ctx.save();
+    ctx.rotate(bank * 0.35);
+    ctx.strokeStyle = hsl(hue, 0.85, 0.72, 1);
+    ctx.fillStyle = hsl(hue, 0.45, 0.82, 1);
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    if (id === 'walker' || id === 'harvester') {
+      const step = Math.sin(phase * TAU);
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.5, size * 0.2);
+      ctx.lineTo(0, -size * 0.5);
+      ctx.lineTo(size * 0.5, size * 0.2);
+      ctx.closePath();
+      ctx.fill();
+      const leg = size * 0.55 * (0.4 + step * 0.6);
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.35, size * 0.2); ctx.lineTo(-size * 0.35, size * 0.2 + leg);
+      ctx.moveTo(size * 0.35, size * 0.2); ctx.lineTo(size * 0.35, size * 0.2 - leg * 0.7);
+      ctx.stroke();
+    } else if (id === 'rover') {
+      ctx.fillRect(-size * 0.7, -size * 0.15, size * 1.4, size * 0.35);
+      ctx.beginPath();
+      ctx.arc(-size * 0.45, size * 0.25, size * 0.22, 0, TAU);
+      ctx.arc(size * 0.45, size * 0.25, size * 0.22, 0, TAU);
+      ctx.fill();
+    } else if (id === 'flier') {
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.9, size * 0.1);
+      ctx.lineTo(0, -size * 0.35);
+      ctx.lineTo(size * 0.9, size * 0.1);
+      ctx.lineTo(0, size * 0.15);
+      ctx.closePath();
+      ctx.fill();
+    } else if (id === 'lander') {
+      ctx.beginPath();
+      ctx.moveTo(0, -size * 0.55);
+      ctx.lineTo(-size * 0.45, size * 0.35);
+      ctx.lineTo(size * 0.45, size * 0.35);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.3, size * 0.35); ctx.lineTo(-size * 0.3, size * 0.65);
+      ctx.moveTo(size * 0.3, size * 0.35); ctx.lineTo(size * 0.3, size * 0.65);
+      ctx.stroke();
+    } else if (id === 'swimmer') {
+      const w = Math.sin(phase * TAU);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, size * 0.55, size * 0.28, 0, 0, TAU);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.5, 0);
+      ctx.quadraticCurveTo(-size * 0.9, -size * 0.5 * w, -size * 1.1, 0);
+      ctx.stroke();
+    } else if (id === 'ciliate') {
+      for (let i = 0; i < 6; i++) {
+        const ang = i * TAU / 6 + phase * 0.4;
+        const wob = Math.sin(phase * TAU + i) * size * 0.25;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(ang) * size * 0.2, Math.sin(ang) * size * 0.2);
+        ctx.lineTo(Math.cos(ang) * (size * 0.75 + wob), Math.sin(ang) * (size * 0.75 + wob));
+        ctx.stroke();
+      }
+      ctx.beginPath(); ctx.arc(0, 0, size * 0.22, 0, TAU); ctx.fill();
+    } else if (id === 'flucton') {
+      ctx.beginPath();
+      ctx.arc(-size * 0.28, 0, size * 0.22, 0, TAU);
+      ctx.arc(size * 0.28, 0, size * 0.22, 0, TAU);
+      ctx.fill();
+      ctx.strokeStyle = hsl(hue, 0.9, 0.7, 0.7);
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.06, 0); ctx.lineTo(size * 0.06, 0);
+      ctx.stroke();
+    } else if (id === 'courier' || id === 'probe') {
+      ctx.beginPath();
+      ctx.moveTo(size * 0.6, 0);
+      ctx.lineTo(-size * 0.35, -size * 0.35);
+      ctx.lineTo(-size * 0.15, 0);
+      ctx.lineTo(-size * 0.35, size * 0.35);
+      ctx.closePath();
+      ctx.fill();
+    } else if (id === 'symbiont') {
+      ctx.beginPath();
+      ctx.moveTo(0, -size * 0.65);
+      ctx.lineTo(size * 0.5, 0);
+      ctx.lineTo(0, size * 0.65);
+      ctx.lineTo(-size * 0.5, 0);
+      ctx.closePath();
+      ctx.fill();
+    } else if (id === 'weaver') {
+      ctx.beginPath();
+      for (let i = 0; i < 3; i++) {
+        const a = i * TAU / 3 - Math.PI / 2;
+        ctx.moveTo(0, 0);
+        ctx.lineTo(Math.cos(a) * size * 0.75, Math.sin(a) * size * 0.75);
+      }
+      ctx.stroke();
+    } else if (id === 'mote') {
+      ctx.beginPath(); ctx.arc(0, 0, size * 0.35, 0, TAU); ctx.fill();
+    } else {
+      ctx.font = '700 ' + Math.round(size * 1.4) + 'px system-ui, sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(arch.glyph, 0, 0);
+    }
+    ctx.restore();
+  }
+
+  function drawVesselGlyph(ctx, game, X, Y, scale) {
     const body = game.body;
     if (!body) return;
     const arch = RS.vessel.archOf(body);
-    const size = px(0.022);
+    const size = px(0.022) * (scale || 1);
 
     ctx.save();
-    ctx.translate(X, Y - size * 0.15);
-    ctx.rotate(Math.sin((game.scene.t || 0) * 60) * 0.02 + (body.heading || 0) * 0.06);
+    ctx.translate(X, Y);
+    ctx.rotate(body.heading || 0);
 
     const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, size * 3.2);
     glow.addColorStop(0, hsl(arch.hue, 0.8, 0.8, 0.5));
@@ -1015,23 +1221,27 @@
     ctx.fillStyle = glow;
     ctx.beginPath(); ctx.arc(0, 0, size * 3.2, 0, TAU); ctx.fill();
 
-    ctx.fillStyle = hsl(arch.hue, 0.5, 0.85, 1);
-    ctx.strokeStyle = hsl(arch.hue, 0.9, 0.7, 1);
-    ctx.lineWidth = 1.6;
-    ctx.font = '700 ' + Math.round(size * 1.6) + 'px system-ui, sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(arch.glyph, 0, 0);
+    drawVesselSilhouette(ctx, arch, body, size, arch.hue);
+
     ctx.restore();
 
     const cf = body.charge / arch.capacity;
     ctx.strokeStyle = hsl(cf > 0.25 ? 160 : 0, 0.85, 0.6, 0.8);
     ctx.lineWidth = 2.2;
     ctx.beginPath();
-    ctx.arc(X, Y - size * 0.15, size * 2.1, -Math.PI / 2, -Math.PI / 2 + TAU * clamp01(cf));
+    ctx.arc(X, Y, size * 2.1, -Math.PI / 2, -Math.PI / 2 + TAU * clamp01(cf));
+    ctx.stroke();
+
+    ctx.strokeStyle = hsl(arch.hue, 0.9, 0.75, 0.9);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(X, Y);
+    ctx.lineTo(X + Math.cos(body.heading || 0) * size * 2.8,
+      Y + Math.sin(body.heading || 0) * size * 2.8);
     ctx.stroke();
   }
 
   RS.worldrender = { drawSystem, drawPlanet, radiusMap, bodyScreen, atmosphereHue,
-    globeTexture, globeDisc, drawVesselGlyph, drawFreeroam,
+    globeTexture, globeDisc, drawVesselGlyph, attentionOf, globeProject,
     clearTextureCache() { texCache.clear(); discCanvas = null; discKey = ''; biomeColCache.clear(); hoodCanvas = null; hoodKey = ''; } };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));

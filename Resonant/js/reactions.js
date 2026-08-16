@@ -364,11 +364,10 @@
       if (game.scene.kind === 'planet' && !game.flags.cameraHint) {
         game.flags.cameraHint = true;
         RS.ui.toast({
-          kind: 'info', icon: 'C', hue: 200, ms: 4200,
-          title: 'Two cameras, one ground',
-          body: 'C switches SIDE-ON and MAP; the ground is the same. Tap the ground to survey.'
+          kind: 'info', icon: '◎', hue: 200, ms: 4200,
+          title: 'On the globe',
+          body: 'You never leave the planet picture. Σ frames height. Tap the ground to survey.'
         });
-        if (RS.ui.pulseSceneTag) RS.ui.pulseSceneTag();
       }
     });
 

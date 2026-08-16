@@ -253,14 +253,7 @@
       }
       const ids = ['time', 'space', 'phase', 'frequency'];
       if (e.key === 'Tab') { kbIndex = (kbIndex + 1) % 4; e.preventDefault(); bus.emit('dial:jump', { dial: game.dials[ids[kbIndex]] }); return; }
-      if (e.key === 'c' || e.key === 'C') {
-        if (game.inhabiting && game.scene && game.scene.kind === 'planet' && RS.scenes.cycleCamera) {
-          e.preventDefault();
-          const r = RS.scenes.cycleCamera(game);
-          if (r.ok) bus.emit('scene:camera', { forceCam: r.forceCam, mode: r.mode });
-        }
-        return;
-      }
+      if (e.key === 'c' || e.key === 'C') return;
       const dial = game.dials[ids[kbIndex]];
       let d = 0;
       if (e.key === 'ArrowRight' || e.key === 'ArrowUp') d = 1;

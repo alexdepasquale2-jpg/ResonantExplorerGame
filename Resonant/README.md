@@ -476,16 +476,14 @@ surface without gaining a second control.
   used for drawing and for "am I submerged?" follows that tide; hydrosphere
   itself is never mutated.
 
-Embodied on a planet you walk a **lon/lat tangent plane** against the derived
-heightfield. Near the ground the camera is a rich side-on slice (multi-biome
-silhouette, vegetation ticks, live waterline, hashed clouds). Climb or press C
-(or tap the scene tag) and it becomes a 48×32 freeroam neighbourhood of the
-same samples, with slope lighting baked into the cache. Observing still uses
-the globe (specular ocean, hashed city lights on the night limb). Switching
-never teleports: pose is `(lon, lat, altitude)` and nothing about the sphere
-is stored. Tap the ground to **pulse** a seam — insight on a cooldown, stored
-as two numbers per world. A sited extractor pays idle Ψ from that world's
-richest resource; upkeep still only gates placement.
+Embodied on a planet you walk a **lon/lat tangent plane** on the same globe
+you observed. Inhabiting pins you on the near side: a 96-sample underfoot apron,
+vessel silhouette, and agents on the disc. **Σ frames height of attention** —
+zoom and relief, not a camera swap. Observing still uses the globe (specular
+ocean, hashed city lights on the night limb). Pose is `(lon, lat, altitude)`
+and nothing about the sphere is stored. Tap the ground to **pulse** a seam —
+insight on a cooldown, stored as two numbers per world. A sited extractor pays
+idle Ψ from that world's richest resource; upkeep still only gates placement.
 
 ### And silence where there is no medium
 
