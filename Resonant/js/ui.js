@@ -26,38 +26,13 @@
     for (const id of ['insight-val', 'rate-val', 'gnosis-val', 'progress-fill', 'progress-pct',
       'tier-name', 'tier-sci', 'layer-name', 'layer-rules', 'objective', 'verb',
       'toasts', 'readout', 'drawer', 'drawer-body', 'drawer-title', 'drawer-tabs',
-      'btn-drawer-close', 'beat-hint', 'btn-menu',
+      'btn-drawer-close', 'beat-hint', 'btn-menu', 'btn-debug',
       'scene-tag', 'body-bar', 'btn-contact', 'contact-hint']) {
       el[id] = $(id);
     }
 
-    /* Debug HUD is opt-in (localhost / ?debug=1 / localStorage). Mount once;
-     * stay hidden until toggled. Never a player-facing topbar control. */
-    if (RS.debug && RS.debug.enabled()) {
-      let hud = $('debug-hud');
-      if (!hud) {
-        hud = document.createElement('div');
-        hud.id = 'debug-hud';
-        hud.className = 'hidden';
-        document.body.appendChild(hud);
-      }
-      el['debug-hud'] = hud;
-      hud.addEventListener('click', ev => {
-        const btn = ev.target.closest('[data-dbg]');
-        if (!btn) return;
-        const action = btn.dataset.dbg;
-        if (action === 'close') { setDebugOpen(false); return; }
-        const arg = btn.dataset.dbgArg;
-        const r = RS.debug.run(game, bus, action, arg);
-        if (r && r.json && typeof navigator !== 'undefined' && navigator.clipboard) {
-          navigator.clipboard.writeText(r.json).catch(() => {});
-          toast({ kind: 'info', title: 'Save JSON copied', body: r.json.length + ' chars' });
-        } else if (r && !r.ok) {
-          bus.emit('ui:deny', { reason: 'blocked', message: r.reason || 'debug failed' });
-        }
-        renderDebug(game);
-      });
-    }
+    mountDebugHud(game, bus);
+    syncDebugButton();
 
     /* One button, one drawer, tabs inside it. There were seven topbar buttons
      * and every new panel added another; on a phone they were already competing
@@ -67,6 +42,9 @@
      * it missable. */
     el['btn-menu'].addEventListener('click', () => toggleDrawer(game, bus, drawerOpen ? null : lastTab));
     el['btn-contact'].addEventListener('click', () => toggleDrawer(game, bus, 'contact'));
+    if (el['btn-debug']) {
+      el['btn-debug'].addEventListener('click', () => toggleDebug(game, bus));
+    }
     el['btn-drawer-close'].addEventListener('click', () => closeDrawer());
 
     el['drawer-tabs'].addEventListener('click', ev => {
@@ -214,15 +192,55 @@
 
   // --- per-frame -----------------------------------------------------------
 
+  // --- debug HUD -----------------------------------------------------------
+
+  function mountDebugHud(game, bus) {
+    if (!RS.debug || !RS.debug.enabled() || el['debug-hud']) return;
+    let hud = $('debug-hud');
+    if (!hud) {
+      hud = document.createElement('div');
+      hud.id = 'debug-hud';
+      hud.className = 'hidden';
+      document.body.appendChild(hud);
+    }
+    el['debug-hud'] = hud;
+    hud.addEventListener('click', ev => {
+      const btn = ev.target.closest('[data-dbg]');
+      if (!btn) return;
+      const action = btn.dataset.dbg;
+      if (action === 'close') { setDebugOpen(false); return; }
+      const arg = btn.dataset.dbgArg;
+      const r = RS.debug.run(game, bus, action, arg);
+      if (r && r.json && typeof navigator !== 'undefined' && navigator.clipboard) {
+        navigator.clipboard.writeText(r.json).catch(() => {});
+        const title = r.dump ? 'Copied to clipboard' : 'Save JSON copied';
+        toast({ kind: 'info', title, body: (r.dump || r.json).slice(0, 120) });
+      } else if (r && !r.ok) {
+        bus.emit('ui:deny', { reason: 'blocked', message: r.reason || 'debug failed' });
+      }
+      renderDebug(game);
+    });
+  }
+
+  function syncDebugButton() {
+    const btn = el['btn-debug'];
+    if (!btn) return;
+    const on = !!(RS.debug && RS.debug.enabled());
+    btn.hidden = !on;
+    btn.classList.toggle('live', on && debugOpen);
+  }
+
   function setDebugOpen(on) {
     debugOpen = !!on;
     const hud = el['debug-hud'];
-    if (!hud) return;
-    hud.classList.toggle('hidden', !debugOpen);
+    if (hud) hud.classList.toggle('hidden', !debugOpen);
+    syncDebugButton();
   }
 
   function toggleDebug(game, bus) {
-    if (!RS.debug || !RS.debug.enabled() || !el['debug-hud']) return false;
+    if (!RS.debug || !RS.debug.enabled()) return false;
+    mountDebugHud(game, bus);
+    if (!el['debug-hud']) return false;
     setDebugOpen(!debugOpen);
     if (debugOpen) renderDebug(game);
     return true;

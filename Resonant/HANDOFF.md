@@ -31,7 +31,7 @@ That one decision is why a 22-rung ladder of scopes costs almost nothing, why
 saves are ~2 kB, and why an alternative-physics universe is possible at all.
 
 ```bash
-node tools/simtest.js      # 2023 assertions — must be green before you commit
+node tools/simtest.js      # 2030 assertions — must be green before you commit
 node tools/build.mjs       # emits dist/resonant.html, one self-contained file
 python3 -m http.server 8000   # then open /Resonant/index.html
 ```
@@ -99,7 +99,7 @@ stays embark-blocked.
 
 ### 2.3 The test suite is the specification
 
-`tools/simtest.js` is 2023 assertions and about half the value of this
+`tools/simtest.js` is 2030 assertions and about half the value of this
 repository. It runs headless in Node against the real modules (including
 `ui.js`, `audio.js` — the HTML builders are pure string functions).
 
