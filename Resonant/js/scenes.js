@@ -284,6 +284,11 @@
     else if (s.kind === 'molecular') RS.molecular.tick(game, bus, dt);
     else if (s.kind === 'shells') RS.shells.tick(game, bus, dt);
 
+    /* Relays keep channels open from other systems. Runs after the local
+     * scene has had a chance to claim `s.contact`, and is a no-op unless
+     * a probe or beacon is actually stationed somewhere. */
+    RS.contact.tickRelays(game, bus, dt);
+
     /* Inhabitants, in every scope. Derived rather than spawned, so they were
      * already doing this before you arrived and will be doing it when you come
      * back — and cost nothing at all while you are elsewhere. */
@@ -647,15 +652,26 @@
     const ctl = RS.vessel.controlsFrom(game);
 
     if (RS.vessel.archOf(body).neural && body.mind) {
-      /* Riding a mind: the mind drives, the player leans. */
-      const sense = nearestSense(game, s);
-      const r = RS.vessel.stepMind(game, body, env, ctl, dt, sense);
-      if (r) {
-        body.possession = r.possession;
-        body.arousal = r.arousal;
+      if (body.ridingCiv && s.planet) {
+        /* Riding a culture: the closed-form trajectory is what you lean on,
+         * not a creature's hidden units. Same dials, one scale up. */
+        const bias = RS.contact.lean(game, s.planet, ctl, dt);
+        if (bias) {
+          body.possession = clamp01((Math.abs(ctl.rate) * (0.3 + ctl.vert)) * 0.7 + bias.mag * 0.5);
+          body.arousal = bias.mag;
+        }
+        RS.vessel.integrate(game, body, env, { rate: 0, heading: body.heading, vert: ctl.vert, band: ctl.band }, dt);
+      } else {
+        /* Riding a mind: the mind drives, the player leans. */
+        const sense = nearestSense(game, s);
+        const r = RS.vessel.stepMind(game, body, env, ctl, dt, sense);
+        if (r) {
+          body.possession = r.possession;
+          body.arousal = r.arousal;
+        }
+        /* Still integrate drag and gravity so the ridden body obeys the world. */
+        RS.vessel.integrate(game, body, env, { rate: 0, heading: body.heading, vert: ctl.vert, band: ctl.band }, dt);
       }
-      /* Still integrate drag and gravity so the ridden body obeys the world. */
-      RS.vessel.integrate(game, body, env, { rate: 0, heading: body.heading, vert: ctl.vert, band: ctl.band }, dt);
     } else {
       const r = RS.vessel.integrate(game, body, env, ctl, dt);
       if (r.blocked && !body.__warned) {
@@ -712,18 +728,30 @@
     game.body.charge = arch.capacity * 0.6;
     game.inhabiting = true;
 
-    /* Riding a mind needs a mind to ride. Pick the most encephalised creature
-     * nearby, because that is the one worth being. */
+    /* Riding a mind needs a mind to ride. A creature if there is one; a
+     * civilisation if you are in their system with no body on the ground —
+     * that is the same influence mechanic one scale up, and it is why the
+     * symbiont works in orbit. */
     if (arch.neural) {
       const s = game.scene;
       let best = null;
       for (const a of s.agents) {
         if (!best || a.fauna.encephalisation > best.fauna.encephalisation) best = a;
       }
-      if (!best) { game.inhabiting = false; game.body = RS.vessel.newBody('mote'); return { ok: false, reason: 'no mind here to ride' }; }
-      RS.vessel.ride(game.body, best.fauna.hash);
-      best.ridden = true;
-      game.body.riddenFauna = best.fauna;
+      if (best) {
+        RS.vessel.ride(game.body, best.fauna.hash);
+        best.ridden = true;
+        game.body.riddenFauna = best.fauna;
+        game.body.ridingCiv = false;
+      } else if (s.planet && (s.planet.civ || RS.civ.civOf(s.planet, s.tGyr))) {
+        RS.vessel.ride(game.body, s.planet.hash);
+        game.body.ridingCiv = true;
+        game.body.riddenCivKey = RS.influence.planetKey(s.planet);
+      } else {
+        game.inhabiting = false;
+        game.body = RS.vessel.newBody('mote');
+        return { ok: false, reason: 'no mind here to ride' };
+      }
     }
     bus.emit('vessel:embark', { arch, env });
     return { ok: true };

@@ -31,7 +31,7 @@ That one decision is why a 22-rung ladder of scopes costs almost nothing, why
 saves are ~2 kB, and why an alternative-physics universe is possible at all.
 
 ```bash
-node tools/simtest.js      # 1610 assertions — must be green before you commit
+node tools/simtest.js      # 1652 assertions — must be green before you commit
 node tools/build.mjs       # emits dist/resonant.html, one self-contained file
 python3 -m http.server 8000   # then open /Resonant/index.html
 ```
@@ -81,7 +81,7 @@ analytic where it buys scale, integrated where it buys feel.
 
 ### 2.3 The test suite is the specification
 
-`tools/simtest.js` is 1610 assertions and about half the value of this
+`tools/simtest.js` is 1652 assertions and about half the value of this
 repository. It runs headless in Node against the real modules (including
 `ui.js`, `audio.js` — the HTML builders are pure string functions).
 
@@ -195,9 +195,14 @@ Everything in the original plan has landed.
   beds, directional arrival transitions, the strike/combo system, a tabbed
   drawer, and a codex that is the essence sheet.
 
-**Performance**: 60 fps everywhere except the attunement field, which runs at
-~57 with bloom on and 60.5 with it off. That is measured, not estimated, and
-there is a settings toggle. See §7.
+**Performance**: 60 fps everywhere except the attunement field, which used to
+run at ~57 with bloom on because capture sampled the display canvas. Bloom now
+reads an offscreen world buffer; the flush that cost a quarter of the frame
+budget is gone. There is still a settings toggle. See §7.
+
+Culture-to-culture rumours, riding a civilisation, contact at range (beacon or
+stationed probe), and a mobile pass on the drawer tabs and pilot bar have also
+landed. `contact.js` is the file.
 
 ---
 
@@ -213,7 +218,7 @@ rather than a number.
 | **The gate punished a half-open window twice.** | `n.gate` scales the rate of progress, not `align`. A rhythmic layer paid a twelfth of the tutorial layer before this. |
 | **A maxed Strike could finish a node by clicking.** | `FATIGUE = 0.72` per strike on the same node bounds the total at ~85% of a lock. The hold is the game. |
 | **`seaLevel` returns −99 for dry worlds** and was used as a temperature datum. | 9,984 of 12,660 samples were wrong and the global average stayed correct, so nothing looked broken. Use `datum(p)`. |
-| **The bloom captures at the *top* of the frame.** | Sampling a canvas with drawing queued forces a pipeline flush: 1.3 ms of work measured 16 ms. Move it back after the world draws and you lose a quarter of the frame budget. |
+| **Bloom must not sample the canvas it composites onto.** | Sampling a canvas with drawing queued forces a pipeline flush: 1.3 ms of work measured 16 ms. The world is drawn into an offscreen buffer; capture reads that, then the display gets a blit plus the glow. Drawing the world onto the display and capturing it again reintroduces the flush. |
 | **The foam's ejection rule was dead code.** | Σ is the vessel's vertical axis while embodied, so you can never *arrive* there wearing a body. The live rule is `embark` refusing. |
 | **`newGame` resets the physics block.** | It is module-level by necessity. Without the reset, a new session derives the galaxy under a previous one's borrowed laws. |
 
@@ -221,21 +226,22 @@ rather than a number.
 
 ## 7. What to do next, in order of value
 
-1. **Culture-to-culture relations.** Standing is per-player. Cultures knowing
-   about *each other* — and about what you did to their neighbours — is the same
-   derived-plus-delta pattern with one more index. `contact.js`.
-2. **Riding a civilisation.** Riding a mind works (`vessel.js`, `neural.js`).
-   Biasing a culture's trajectory is the same influence mechanic one scale up,
-   and `civ.civOf` is already a closed-form curve waiting to be perturbed.
-3. **Contact at range.** Carriers require you in the system. A probe left behind,
-   or a beacon network, could hold a channel open across light years.
-4. **Bloom without the flush.** Draw the world into an offscreen canvas and
-   composite, so the capture never samples its own target. Recovers ~3 fps in
-   the busiest scope. Moderate refactor of `render.js`; the win is small and the
-   risk is real, which is why it was left.
-5. **Mobile pass.** Layout is responsive and the dials are thumb-designed, but
-   the drawer tab row and the pilot bar have only been checked at desktop
-   widths.
+The culture, riding, range, bloom-buffer and mobile-layout passes have landed.
+See `contact.js` (rumours, relays, `lean`), `bloom.js` (`begin` / `captureWorld` /
+`blit`), and the 560px drawer-tab / pilot-bar rules in `style.css`.
+
+What is still worth doing:
+
+1. **Bloom cost in the attunement field.** The world buffer removes the flush;
+   the remaining ~1.3 ms of threshold/blur is still the dearest post in the
+   game. A cheaper threshold (or skipping STRIDE more aggressively in that
+   scope) is the next fps win, if any.
+2. **A census of rumours.** Neighbour sampling is hashed and capped; a culture
+   whose only neighbour sits outside the sample will not name them. Widening
+   the sample is safe and cheap compared to a full sector walk.
+3. **Guide copy for riding a culture.** The symbiont now works in orbit. The
+   live guide still talks about riding a creature first, which is the common
+   case, but an orbital ride is easy to miss.
 
 ---
 
@@ -257,7 +263,7 @@ rather than a number.
 ## 9. Verification checklist before you push
 
 ```bash
-node tools/simtest.js     # 1610+ assertions, zero failures
+node tools/simtest.js     # 1652+ assertions, zero failures
 node tools/build.mjs      # single file still builds
 ```
 

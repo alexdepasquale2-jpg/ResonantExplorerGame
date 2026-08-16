@@ -541,6 +541,17 @@
         title: 'Channel closed', body: 'You broke the carrier on ' + civ.name + '.' });
     });
 
+    bus.on('contact:station', ({ planet }) => {
+      RS.audio.discover(0.7);
+      RS.feel.FX.discovery(320, 0.7);
+      RS.ui.toast({
+        kind: 'info', icon: '◈', hue: 320, ms: 4200,
+        title: 'PROBE STATIONED',
+        body: 'A sensor remains at ' + planet.name +
+          '. Hold their carrier from anywhere and the channel stays open.'
+      });
+    });
+
     bus.on('settings', ({ key, value }) => {
       if (key === 'audio') RS.audio.setEnabled(value);
       if (key === 'haptics') RS.feel.setHaptics(value);

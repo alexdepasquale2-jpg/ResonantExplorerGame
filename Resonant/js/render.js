@@ -973,15 +973,16 @@
 
     ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
 
-    /* Bloom captures *here*, before the clear, while the canvas still holds the
-     * previous frame's finished image and nothing is queued on it. Sampling a
-     * canvas with drawing queued on it forces a pipeline flush — measured at
-     * 16 ms in this scope, against 1.3 ms of actual work. See bloom.js. */
-    if (game.settings.bloom !== false && RS.bloom) {
-      const kb = BLOOM[game.scene ? game.scene.kind : 'field'] || BLOOM.field;
-      const trc = game.scene ? game.scene.transition : 0;
-      RS.bloom.capture(canvas, view.w, view.h, kb.thr * (1 - trc * 0.35));
-    }
+    /* Bloom reads an offscreen world buffer, never this canvas. Drawing the
+     * world into a buffer and compositing it means capture is a copy of a
+     * finished source rather than a flush of the frame still being built —
+     * see bloom.js. Fall back to drawing on the display if the buffer cannot
+     * be allocated, and skip bloom for that frame rather than stall it. */
+    const displayCtx = ctx;
+    const bloomOn = game.settings.bloom !== false && RS.bloom && RS.bloom.isEnabled();
+    const worldBuf = bloomOn ? RS.bloom.begin(view.w, view.h, view.dpr) : null;
+    if (worldBuf) ctx = worldBuf.ctx;
+    ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
 
     ctx.clearRect(0, 0, view.w, view.h);
 
@@ -1170,13 +1171,21 @@
      *
      * After the world and before the vignette, so light spills between things
      * and the vignette still darkens the edge of the result rather than being
-     * bloomed itself. Pushed hard during a transition, which is most of why an
-     * arrival now reads as an event rather than as a cut. */
-    if (game.settings.bloom !== false && RS.bloom) {
+     * bloomed itself. Capture reads the world buffer; the display only
+     * receives a blit plus the glow. Pushed hard during a transition, which
+     * is most of why an arrival now reads as an event rather than as a cut. */
+    if (bloomOn && RS.bloom) {
       const b = BLOOM[kind] || BLOOM.field;
       const tr = game.scene ? game.scene.transition : 0;
-      RS.bloom.composite(ctx, view.w, view.h,
-        b.amt * (1 + tr * 1.4) * (game.settings.reduceMotion ? 0.6 : 1));
+      const amt = b.amt * (1 + tr * 1.4) * (game.settings.reduceMotion ? 0.6 : 1);
+      if (worldBuf) {
+        RS.bloom.captureWorld(view.w, view.h, b.thr * (1 - tr * 0.35));
+        displayCtx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
+        displayCtx.clearRect(0, 0, view.w, view.h);
+        RS.bloom.blit(displayCtx, view.w, view.h);
+        RS.bloom.composite(displayCtx, view.w, view.h, amt);
+        ctx = displayCtx;
+      }
     }
 
     drawPost(ctx);

@@ -476,9 +476,16 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   font-size: 10px; font-weight: 400; color: hsl(var(--h), 70%, 70%);
 }
 @media (max-width: 560px) {
-  /* On a phone the bar is competing with the world for a narrow column, so the
-     dial map drops to the two controls that differ most between bodies. */
-  .bb-dial:nth-child(n+3) { display: none; }
+  /* All four dial meanings stay visible: they wrap onto a second line
+     rather than vanishing, because a mapping you cannot see is not a mapping. */
+  .bb-dials { gap: 5px 10px; }
+  .bb-dial:nth-child(n+3) { display: inline-flex; }
+  #body-bar {
+    padding: 5px 8px;
+    gap: 6px;
+    max-width: calc(100vw - 20px);
+  }
+  .bb-name { max-width: 9ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 
 /* The readout is the anchor for the bottom-left column; once the body bar
@@ -639,4 +646,23 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   color: var(--ink);
   border-bottom-color: hsl(190, 70%, 60%);
   background: rgba(140, 175, 220, .09);
+}
+
+@media (max-width: 560px) {
+  /* Glyphs stay; labels live in the drawer title. The row is a thumb-width
+     scroller with 44px targets instead of a clipped sentence of seven words. */
+  #drawer-tabs {
+    gap: 0;
+    padding: 4px 8px 6px;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x proximity;
+  }
+  #drawer-tabs button {
+    padding: 8px 10px 6px;
+    min-width: 44px;
+    font-size: 0;
+    letter-spacing: 0;
+    scroll-snap-align: start;
+  }
+  #drawer-tabs button span { font-size: 16px; }
 }

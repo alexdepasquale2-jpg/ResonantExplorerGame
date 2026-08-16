@@ -178,7 +178,7 @@
     {
       id: 'symbiont', name: 'Symbiont', glyph: '❋', hue: 340,
       blurb: 'No body of its own. Rides a living mind and leans on it — you influence, you do not command.',
-      medium: [MEDIUM.SURFACE, MEDIUM.LIQUID, MEDIUM.GAS],
+      medium: [MEDIUM.SURFACE, MEDIUM.LIQUID, MEDIUM.GAS, MEDIUM.ORBIT],
       mass: 0.05, thrust: 0, dragC: 1, liftC: 0, grip: 0,
       senseRadius: 0.6, senseBands: 5, capacity: 90, draw: 0.9, regen: 1.1,
       needs: env => !env.hasMinds ? 'no minds here to ride' : null,
@@ -234,13 +234,15 @@
       };
     }
     if (scene.kind === 'system') {
+      const p = scene.planet;
+      const civ = p && (p.civ || RS.civ.civOf(p, scene.tGyr));
       return {
         medium: MEDIUM.ORBIT,
         gravity: 0, pressure: 0,
         temperature: 3,
         flux: scene.system ? RS.stellar.fluxAt(scene.system, Math.max(0.05, scene.radius || 1)) : 1,
         roughness: 0,
-        hasMinds: false,
+        hasMinds: !!civ,
         label: scene.system ? scene.system.name : 'system'
       };
     }
@@ -305,7 +307,9 @@
       speed: Math.hypot(b.vx || 0, b.vy || 0),
       elevation: b.elevation || 0,
       holdMass: b.holdMass || 0,
-      possession: b.mindState ? b.mindState.possession : null,
+      possession: b.mindState ? b.mindState.possession
+        : (b.possession != null ? b.possession : null),
+      ridingCiv: !!b.ridingCiv,
       /* Seconds of charge left at the current draw, which is the number that
        * actually tells you whether to turn back. Infinite while regenerating. */
       endurance: enduranceOf(a, b, env),
