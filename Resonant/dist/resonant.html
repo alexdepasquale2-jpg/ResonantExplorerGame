@@ -190,10 +190,18 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   letter-spacing: .04em;
 }
 
+#verb {
+  align-self: flex-start;
+  font-size: 9px; font-weight: 700; letter-spacing: .18em;
+  color: var(--accent);
+  margin-top: 6px;
+  opacity: .85;
+}
+
 #objective {
   align-self: flex-start;
   font-size: 10px; color: var(--dim);
-  margin-top: 5px; max-width: 46ch; line-height: 1.45;
+  margin-top: 3px; max-width: 46ch; line-height: 1.45;
 }
 
 /* ── toasts ───────────────────────────────────────────────────────────── */
@@ -433,9 +441,19 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   margin-top: 8px;
   font-size: 9px; letter-spacing: .2em; font-weight: 700;
   color: var(--accent);
-  transition: color .3s;
+  transition: color .3s, box-shadow .3s, outline-color .3s;
   pointer-events: auto;
   width: max-content;
+}
+#scene-tag.hint {
+  outline: 1px solid hsla(187, 80%, 70%, .8);
+  box-shadow: 0 0 12px hsla(187, 80%, 60%, .45);
+  animation: tag-hint 1.8s ease-out 2;
+}
+@keyframes tag-hint {
+  0% { box-shadow: 0 0 2px hsla(187, 80%, 60%, .2); }
+  40% { box-shadow: 0 0 14px hsla(187, 80%, 70%, .7); }
+  100% { box-shadow: 0 0 4px hsla(187, 80%, 60%, .25); }
 }
 
 #body-bar {
@@ -812,6 +830,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 
   <div id="beat-hint"></div>
 
+  <div id="verb"></div>
   <div id="objective"></div>
 
   <div id="toasts"></div>
@@ -3349,32 +3368,50 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 
   function spawnNode(game, field) {
     const tierIndex = clamp(Math.round(game.dials.space.value), 0, RS.cosmos.TIERS.length - 1);
-    /* Which layer a node belongs to is biased toward — but not locked to — the
-     * band being observed. A quarter of nodes come from neighbouring bands, so
-     * the spectrum always feels like it is bleeding at the edges and there is
-     * always something just off-tune to chase. */
-    let bandIndex = field.bandIndex;
-    const spread = hashF(hashN(game.seed, field.t * 1000 | 0, 3));
-    if (spread > 0.78) {
-      const dir = spread > 0.89 ? 1 : -1;
-      const alt = bandIndex + dir;
-      const focus = RS.dials.focusOf(game.dials.frequency);
-      if (alt >= 0 && alt < RS.spectrum.BANDS.length &&
-          RS.spectrum.BANDS[alt].centre <= game.dials.frequency.max &&
-          !RS.spectrum.isGhost(RS.spectrum.BANDS[alt], focus)) bandIndex = alt;
+    /* The first lock is a lesson, not a census. One nearby baryonic node
+     * whose φ sits under the default needle — neighbour-band bleed and a rim
+     * spawn would make the first sweep a hunt, and the first verb is hold. */
+    const lesson = (game.stats.crystals || 0) === 0 && field.bandIndex === 0;
+    let bandIndex = lesson ? 0 : field.bandIndex;
+    if (!lesson) {
+      /* Which layer a node belongs to is biased toward — but not locked to — the
+       * band being observed. A quarter of nodes come from neighbouring bands, so
+       * the spectrum always feels like it is bleeding at the edges and there is
+       * always something just off-tune to chase. */
+      const spread = hashF(hashN(game.seed, field.t * 1000 | 0, 3));
+      if (spread > 0.78) {
+        const dir = spread > 0.89 ? 1 : -1;
+        const alt = bandIndex + dir;
+        const focus = RS.dials.focusOf(game.dials.frequency);
+        if (alt >= 0 && alt < RS.spectrum.BANDS.length &&
+            RS.spectrum.BANDS[alt].centre <= game.dials.frequency.max &&
+            !RS.spectrum.isGhost(RS.spectrum.BANDS[alt], focus)) bandIndex = alt;
+      }
     }
 
-    const addr = nextAddress(field, tierIndex, bandIndex);
-    const man = RS.fractal.resolve(game.seed, tierIndex, bandIndex, addr.cellX, addr.cellY, addr.slot);
+    let addr = nextAddress(field, tierIndex, bandIndex);
+    let man = RS.fractal.resolve(game.seed, tierIndex, bandIndex, addr.cellX, addr.cellY, addr.slot);
+    if (lesson) {
+      const needle = game.dials.frequency.value;
+      let best = man, bestErr = Math.abs(man.signature - needle);
+      for (let tries = 0; tries < 48 && bestErr > 0.4; tries++) {
+        addr = nextAddress(field, tierIndex, bandIndex);
+        const cand = RS.fractal.resolve(game.seed, tierIndex, bandIndex, addr.cellX, addr.cellY, addr.slot);
+        const err = Math.abs(cand.signature - needle);
+        if (err < bestErr) { bestErr = err; best = cand; }
+      }
+      man = best;
+    }
     const band = RS.spectrum.BANDS[bandIndex];
     const h = hashN(man.seed, 31);
 
     const ang = hashF(h, 1) * TAU;
-    const rad = FIELD_RADIUS * SPAWN_MARGIN;
+    const rad = lesson ? 0.22 : FIELD_RADIUS * SPAWN_MARGIN;
     /* Nodes drift on slow near-circular paths rather than straight lines —
      * straight lines leave the field too fast to ever be tuned into, and an
-     * orbit reads as "this place has structure". */
-    const orbit = 0.30 + hashF(h, 2) * 0.62;
+     * orbit reads as "this place has structure". The first node is already
+     * in the room so the sweep is short. */
+    const orbit = lesson ? 0.22 : (0.30 + hashF(h, 2) * 0.62);
     const node = {
       id: 'n' + (game.__nodeSeq = (game.__nodeSeq || 0) + 1),
       man, band,
@@ -3408,7 +3445,8 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       depth: 0,
       parent: null,
       blocked: false,
-      orderMet: 0, orderNeed: 0, orderBonus: 1
+      orderMet: 0, orderNeed: 0, orderBonus: 1,
+      lesson: lesson
     };
     field.nodes.push(node);
     return node;
@@ -3511,8 +3549,11 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 
     /* Spawning. Rate follows how much of the spectrum is actually manifesting:
      * tuned to nothing, almost nothing appears, which makes the empty parts of
-     * the axis feel genuinely empty rather than merely unrewarding. */
-    const cap = capacityOf(game);
+     * the axis feel genuinely empty rather than merely unrewarding. Until the
+     * first crystal there is one node, because a crowded field teaches search
+     * before it teaches hold. */
+    const cap = ((game.stats.crystals || 0) === 0 && field.bandIndex === 0)
+      ? 1 : capacityOf(game);
     const manifestStrength = clamp01(spec.peak);
     field.spawnAcc += dt * (0.55 + manifestStrength * 2.3);
     while (field.spawnAcc >= 1 && field.nodes.length < cap) {
@@ -3713,7 +3754,9 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
           const d = Math.hypot(n.x, n.y) + 1e-4;
           const radial = (f.gx * n.x + f.gy * n.y) / d;
           const tangent = (f.gy * n.x - f.gx * n.y) / d;
-          n.targetRad = clamp(n.targetRad + radial * f.strength * dt * 0.30 * sgn, 0.16, 1.08);
+          if (!n.lesson) {
+            n.targetRad = clamp(n.targetRad + radial * f.strength * dt * 0.30 * sgn, 0.16, 1.08);
+          }
           n.spin = clamp(n.spin + tangent * dt * 0.55 * sgn, -0.95, 0.95);
           break;
         }
@@ -7381,7 +7424,10 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     game.insight -= s.cost.insight;
     const key = planetKey(planet);
     const list = game.deltas[key] || (game.deltas[key] = []);
-    list.push({ id: structId, at: game.stats.playSeconds, progress: 0 });
+    list.push({
+      id: structId, at: game.stats.playSeconds, progress: 0,
+      lon: game.scene && game.scene.lon, lat: game.scene && game.scene.lat
+    });
     bus.emit('structure:place', { planet, struct: s });
     return { ok: true };
   }
@@ -7905,6 +7951,61 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       body.x = G.driftX;
       body.y = G.driftY;
     }
+    noteFirstAmber(game, bus);
+  }
+
+  /* First amber in reach is a named event. Civilisations stay rare; invisibility
+   * is what we are refusing. */
+  function noteFirstAmber(game, bus) {
+    if (game.flags && game.flags.firstAmber) return;
+    const stars = game.galaxy.stars || [];
+    for (let i = 0; i < stars.length; i++) {
+      const st = stars[i];
+      if (!st.resolved || !st.inReach) continue;
+      const sv = surveyOf(game, st);
+      if (sv && sv.civ > 0) {
+        if (!game.flags) game.flags = Object.create(null);
+        game.flags.firstAmber = st.key;
+        game.flags.firstAmberName = st.name;
+        if (bus && bus.emit) bus.emit('discover:civ', { star: st, survey: sv });
+        return;
+      }
+    }
+  }
+
+  /* Neighbours a met culture actually knows, as map marks. Cached against the
+   * contact set so a greeting does not re-derive a neighbourhood every frame. */
+  function rumourMarks(game) {
+    let ids = '';
+    for (const k in game.contacts) {
+      const rec = game.contacts[k];
+      if (rec && rec.met) ids += k + ';';
+    }
+    if (!ids) return [];
+    if (game.__rumourKey === ids) return game.__rumourMarks || [];
+    const marks = [];
+    const seen = Object.create(null);
+    for (const k in game.contacts) {
+      const rec = game.contacts[k];
+      if (!rec || !rec.met) continue;
+      const p = RS.influence.planetFromKey(game, k);
+      if (!p) continue;
+      const civ = RS.civ.civOf(p, 0);
+      if (!civ) continue;
+      const nbs = RS.contact.neighboursOf(game, p, civ);
+      for (let i = 0; i < nbs.length; i++) {
+        const n = nbs[i];
+        const addr = n.planet && n.planet.system && n.planet.system.addr;
+        if (!addr) continue;
+        const key = addr.sx + ',' + addr.sy + ',' + addr.index;
+        if (seen[key]) continue;
+        seen[key] = true;
+        marks.push({ sx: addr.sx, sy: addr.sy, index: addr.index, name: n.civ.name, dist: n.dist });
+      }
+    }
+    game.__rumourKey = ids;
+    game.__rumourMarks = marks;
+    return marks;
   }
 
   // ── rendering ────────────────────────────────────────────────────────────
@@ -7952,6 +8053,12 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     /* Placed label rectangles, so names can be skipped where they would
      * collide. Reset every frame; never allocated per star. */
     labelBoxes.length = 0;
+    const rumours = rumourMarks(game);
+    const rumourAt = Object.create(null);
+    for (let ri = 0; ri < rumours.length; ri++) {
+      const m = rumours[ri];
+      rumourAt[m.sx + ',' + m.sy + ',' + m.index] = m;
+    }
     for (let i = stars.length - 1; i >= 0; i--) {
       const st = stars[i];
       const dx = (st.sx + st.jx) - G.sx;
@@ -7979,7 +8086,17 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 
       st.__x = X; st.__y = Y; st.__r = r;
 
-      if (!st.resolved) continue;
+      const rum = rumourAt[st.sx + ',' + st.sy + ',' + st.index];
+      if (rum) {
+        ctx.strokeStyle = 'hsla(45,85%,68%,0.62)';
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([3, 4]);
+        ctx.beginPath(); ctx.arc(X, Y, r * 3.6, 0, TAU); ctx.stroke();
+        ctx.setLineDash([]);
+        st.__rumour = rum.name;
+      }
+
+      if (!st.resolved && !rum) continue;
 
       /* Survey markers, only for resolved stars. These are the reason to look
        * at the map rather than pick the nearest thing. */
@@ -7998,7 +8115,6 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
           ctx.beginPath(); ctx.arc(X, Y, r * 3.4, 0, TAU); ctx.stroke();
         }
       }
-
       if (st.visited) {
         ctx.strokeStyle = 'rgba(230,240,255,0.42)';
         ctx.lineWidth = 1;
@@ -8110,7 +8226,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   RS.galaxy = {
     LY_PER_SECTOR, WINDOW, newState, starsIn, distanceLy, refresh,
     surveyOf, clearSurveys, selectStar, travelTo, tick, draw, pick,
-    stepSector
+    stepSector, rumourMarks, noteFirstAmber
   };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));
 
@@ -9565,7 +9681,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       'A probe left in their sky, or a beacon, keeps the channel open after you leave.';
   }
 
-  RS.guide = { guideHTML, pathwaysHTML, dialRows, SYMBOLS };
+  RS.guide = { guideHTML, pathwaysHTML, dialRows, SYMBOLS, foresight };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));
 
 </script>
@@ -11279,6 +11395,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       if (!s.planet) selectBody(game, bus, mostInteresting(game, s.system));
       s.agents.length = 0;
       s.lon = 0; s.lat = 0;
+      preferLandPose(game);
       sampleSurface(game);
     } else if (kind === 'cellular') {
       /* You are always inside a cell *of somewhere*. Arriving without a world
@@ -11316,9 +11433,12 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   }
 
   /* Rank worlds by how much there is to find. Life beats habitability beats
-   * resources beats size — which is the order a player cares about them in. */
+   * walkable ground beats resources — a first land that is ocean teaches a
+   * refusal, not a walk. */
   function mostInteresting(game, system) {
     let best = -1, score = -1;
+    const walkerOnly = !!(game.vessels && game.vessels.unlocked && game.vessels.unlocked.walker)
+      && !(game.vessels.unlocked.swimmer);
     for (let i = 0; i < system.bodies.length; i++) {
       const b = system.bodies[i];
       if (b.kind !== 'planet') continue;
@@ -11326,6 +11446,10 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       if (!p) continue;
       let sc = p.habitability * 4 + (p.biosphere ? p.biosphere.complexity * 6 : 0) +
         (p.type.landable ? 1 : 0) + Math.log10(1 + p.massE) * 0.2;
+      if (p.type.landable) {
+        if (p.hydrosphere < 0.55) sc += 2.2;
+        else if (p.hydrosphere > 0.85 && walkerOnly) sc -= 2.4;
+      }
       if (sc > score) { score = sc; best = i; }
     }
     return best >= 0 ? best : 0;
@@ -11436,6 +11560,18 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     if (!civ) { s.contact = null; return; }
 
     RS.contact.accrueAwareness(game, p, civ, dt);
+    const rec = RS.contact.recordOf(game, p);
+    /* Awareness was a silent wait until 0.35. The ramp is the event — two
+     * warm-ups so a lock with no reply feels like someone stirring, not a
+     * broken Hail. */
+    if (rec.awareness >= 0.12 && !rec.warmed1) {
+      rec.warmed1 = true;
+      if (bus && bus.emit) bus.emit('contact:warming', { planet: p, civ, stage: 1 });
+    }
+    if (rec.awareness >= 0.25 && !rec.warmed2) {
+      rec.warmed2 = true;
+      if (bus && bus.emit) bus.emit('contact:warming', { planet: p, civ, stage: 2 });
+    }
     const lock = RS.contact.lockOf(game, p, civ);
     const state = RS.contact.stateOf(game, p, civ, lock);
     const prev = s.contact && s.contact.state;
@@ -11459,6 +11595,69 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   }
 
   // ── planet scene ─────────────────────────────────────────────────────────
+
+  /* 96 samples, a different question: where can this body stand? Do not grow
+   * the profile — walk lon at the current lat, then a few lat nudges. */
+  function liquidAt(planet, lon, lat, t) {
+    const r = RS.planet.biomeAt(planet, lon, lat, t);
+    const sea = RS.planet.seaLevel(planet);
+    const wet = r.elev < sea && r.biome.id !== 'ice';
+    return { wet, biome: r.biome, elev: r.elev, T: r.T };
+  }
+
+  function wantLiquid(arch) {
+    if (!arch) return false;
+    if (arch.id === 'swimmer') return true;
+    if (arch.medium && arch.medium.indexOf && arch.medium.indexOf('liquid') >= 0
+        && arch.medium.indexOf('surface') < 0) return true;
+    return false;
+  }
+
+  function bearingWord(dlon) {
+    if (Math.abs(dlon) < 0.04) return 'ahead';
+    return dlon > 0 ? 'east' : 'west';
+  }
+
+  function nearestStandable(game, archOrWant) {
+    const s = game.scene;
+    const p = s && s.planet;
+    if (!p) return null;
+    const wantWet = archOrWant === 'liquid' || (archOrWant && typeof archOrWant === 'object' && wantLiquid(archOrWant));
+    const N = 96;
+    const t = s.t;
+    let best = null, bestD = 1e9;
+    const lats = [s.lat || 0];
+    for (let k = 1; k <= 4; k++) {
+      lats.push(RS.planet.clampLat((s.lat || 0) + k * 0.14));
+      lats.push(RS.planet.clampLat((s.lat || 0) - k * 0.14));
+    }
+    for (let li = 0; li < lats.length; li++) {
+      const lat = lats[li];
+      for (let i = 0; i < N; i++) {
+        const lon = (i / N) * TAU;
+        const r = liquidAt(p, lon, lat, t);
+        if (wantWet ? !r.wet : r.wet) continue;
+        const dlon = wrapDeltaLon(lon - (s.lon || 0));
+        const d = Math.abs(dlon) + Math.abs(lat - (s.lat || 0)) * 0.6;
+        if (d < bestD) {
+          bestD = d;
+          best = { lon, lat, biome: r.biome, elev: r.elev, dlon, bearing: bearingWord(dlon) };
+        }
+      }
+      if (best && li === 0) break;
+    }
+    return best;
+  }
+
+  function preferLandPose(game) {
+    const s = game.scene;
+    if (!s || !s.planet || !s.planet.type || !s.planet.type.landable) return null;
+    const found = nearestStandable(game, 'land');
+    if (!found) return null;
+    s.lon = found.lon;
+    s.lat = found.lat;
+    return found;
+  }
 
   /* Where on the planet the player is standing, and what it is like there. */
   function sampleSurface(game) {
@@ -11784,9 +11983,28 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       return { ok: false,
         reason: 'nothing persists at this scale — there is nothing for a body to be made of' };
     }
-    const env = RS.vessel.environmentFor(game);
-    const blocked = RS.vessel.canOperate(arch, env);
-    if (blocked) return { ok: false, reason: blocked };
+    const env0 = RS.vessel.environmentFor(game);
+    let blocked = RS.vessel.canOperate(arch, env0);
+    /* A walker refused for ocean is not a dead end — move the reticle to the
+     * nearest shore and try again. The 96-sample scan is the same budget as
+     * the profile; a different question of it. */
+    if (blocked && /liquid/i.test(blocked) && game.scene.kind === 'planet') {
+      const shore = nearestStandable(game, arch);
+      if (shore) {
+        game.scene.lon = shore.lon;
+        game.scene.lat = shore.lat;
+        sampleSurface(game);
+        blocked = RS.vessel.canOperate(arch, RS.vessel.environmentFor(game));
+      }
+    }
+    if (blocked) {
+      const shore = game.scene.kind === 'planet' ? nearestStandable(game, arch) : null;
+      let reason = blocked;
+      if (/liquid/i.test(blocked) && shore && shore.bearing) {
+        reason = 'this is ocean; the shore is ' + shore.bearing;
+      }
+      return { ok: false, reason };
+    }
 
     game.body = RS.vessel.newBody(archId);
     game.body.charge = arch.capacity * 0.6;
@@ -11817,7 +12035,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
         return { ok: false, reason: 'no mind here to ride' };
       }
     }
-    bus.emit('vessel:embark', { arch, env });
+    bus.emit('vessel:embark', { arch, env: RS.vessel.environmentFor(game) });
     return { ok: true };
   }
 
@@ -11878,6 +12096,8 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     const rec = game.surveys[key] || (game.surveys[key] = { work: 0, lastAt: -99 });
     if (now - rec.lastAt < PULSE_COOLDOWN) return { ok: false, reason: 'cooling' };
 
+    const local = RS.planet.resourceAt(s.planet, s.lon, s.lat);
+    const patch = RS.planet.biomeAt(s.planet, s.lon, s.lat, s.t);
     const rich = richnessAt(s.planet, s.lon, s.lat);
     const first = rec.work === 0;
     const dim = 1 / (1 + rec.work * 0.12);
@@ -11897,12 +12117,21 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       if (ex.ok) extracted = ex;
     }
 
+    let seam = null, seamName = null;
+    let bestSeam = 0;
+    for (const k in local) {
+      if (local[k] > bestSeam) { bestSeam = local[k]; seam = k; }
+    }
+    if (seam && RS.civ && RS.civ.COMM_BY_ID[seam]) seamName = RS.civ.COMM_BY_ID[seam].name;
+    else if (seam) seamName = seam;
+
     if (bus && bus.emit) {
       bus.emit('place:pulse', {
-        amount, rich, first, planet: s.planet, work: rec.work, extracted
+        amount, rich, first, planet: s.planet, work: rec.work, extracted,
+        biome: patch && patch.biome, seam: seamName
       });
     }
-    return { ok: true, amount, rich, first, extracted };
+    return { ok: true, amount, rich, first, extracted, biome: patch && patch.biome, seam: seamName };
   }
 
   /* Selling converts cargo to Insight at the local market price — which is why
@@ -11935,7 +12164,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     SCENES, SCENE_BY_ID, sceneForTier, tierForScene, newScene, systemAddrFrom, systemKey, enterSystem, selectBody,
     derivePlanet, mostInteresting, tick, systemPositions, terrainProfile,
     neighbourhood, cameraMode, cycleCamera, cameraLabel, sampleSurface, embark, disembark, extract, sell, pulse, richnessAt, PULSE_COOLDOWN, PROFILE_N,
-    FREE_W, FREE_H,
+    FREE_W, FREE_H, nearestStandable, preferLandPose,
     TIER_CLUSTER, civAt, tickContact, wrapDeltaLon
   };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));
@@ -12101,8 +12330,20 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     const foc = RS.dials.focusOf(D.frequency);
 
     if (game.stats.crystals === 0) {
-      return { text: 'Sweep φ until a smudge resolves, then hold the lock.', kind: 'tutorial' };
+      return { text: 'Drag the cyan φ knob until the beat goes still, then hold.', kind: 'tutorial' };
     }
+    /* Descent is a want, not a shop. After the first crystal, name the star
+     * (or the Σ purchase that opens the map) before the next φ upgrade — the
+     * globe they cannot touch is the reason to buy a body. */
+    const mapRung = RS.scenes.tierForScene('galaxy');
+    const canReachMap = mapRung >= D.space.min && mapRung <= D.space.max;
+    if ((game.stats.systemsSeen || 0) === 0) {
+      if (!canReachMap) {
+        return { text: 'Buy Σ RANGE, then turn Σ inward — a star is waiting.', kind: 'range' };
+      }
+      return { text: 'Turn Σ inward to the star map. Tap a star, then turn Σ again.', kind: 'descend' };
+    }
+    const hunt = recognitionHunt(game);
     /* A band inside the dial's reach but never crystallised is the strongest
      * pull the game has — it is visible, it is close, and it is not yours. */
     for (const b of RS.spectrum.BANDS) {
@@ -12118,9 +12359,35 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     if (nextBand) {
       return { text: 'Nothing new within φ' + D.frequency.max.toFixed(0) + '. Buy φ RANGE to reach ' + nextBand.name + '.', kind: 'range', band: nextBand };
     }
+    if (hunt) return hunt;
     const nextTier = RS.cosmos.TIERS.find(t => !game.known.tiers[t.id] && t.index >= D.space.min && t.index <= D.space.max);
     if (nextTier) return { text: 'Unvisited scale in reach: ' + nextTier.name + '.', kind: 'tier', tier: nextTier };
     return { text: 'Buy Σ RANGE to open the ladder further within, or beyond.', kind: 'range' };
+  }
+
+  /* After an essence has been met twice, the objective may name it. Insight
+   * cannot buy this pathway; that is the point. */
+  function recognitionHunt(game) {
+    if (!RS.guide || !RS.guide.foresight) return null;
+    const fs = RS.guide.foresight(game);
+    if (!fs || !fs.nearest) return null;
+    const n = RS.fractal.gnosisOf(game, fs.nearest.id);
+    if (n < 2 || fs.gap <= 0) return null;
+    return {
+      text: fs.nearest.name + ' still has a blank axis. Find it in a cell, or in a filament.',
+      kind: 'recognition', essence: fs.nearest
+    };
+  }
+
+  /* Persistent tap language. Same three meanings (strike / pulse / pick);
+   * the chip is what stops the cursor from lying. */
+  function sceneVerb(game) {
+    const s = game.scene;
+    if (!s) return 'STRIKE';
+    if (s.kind === 'planet') return 'SURVEY';
+    if (s.kind === 'system') return 'AIM';
+    if (s.kind === 'galaxy') return game.galaxy && game.galaxy.target ? 'TRAVEL' : 'AIM';
+    return 'STRIKE';
   }
 
   /* The objective line inside an embodied scene is a different question, so it
@@ -12129,7 +12396,16 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     const s = game.scene;
     if (s.kind === 'galaxy') {
       const reachLy = (RS.influence.reachRadius(game) * RS.galaxy.LY_PER_SECTOR).toFixed(0);
+      if (game.flags && game.flags.firstAmberName && !game.stats.contacts) {
+        return { text: 'Someone is here — ' + game.flags.firstAmberName +
+          '. Tap the amber ring.', kind: 'contact' };
+      }
       if (!game.galaxy.target) {
+        const rumours = RS.galaxy.rumourMarks ? RS.galaxy.rumourMarks(game) : [];
+        if (rumours.length) {
+          return { text: 'A rumour names ' + rumours[0].name +
+            '. Follow the dashed mark.', kind: 'contact' };
+        }
         return { text: 'Tap a star to select it. Dim stars are beyond your ' + reachLy +
           ' ly field — amber rings are inhabited.', kind: 'select' };
       }
@@ -12152,8 +12428,8 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
         }
         return { text: 'A carrier at φ' + s.contact.lock.carrier.phi.toFixed(1) + '. Tune φ and Δ onto it.', kind: 'contact' };
       }
-      if (!Object.keys(game.research).length) {
-        return { text: 'Research LOCOMOTION to build a body you can land with.', kind: 'research' };
+      if (!game.research.locomotion) {
+        return { text: 'Research Locomotion (120 Ψ) to walk this.', kind: 'research' };
       }
       if (s.planet && !s.planet.type.landable) {
         return { text: s.planet.name + ' has no surface. Select a rocky world, then turn Σ inward to descend.', kind: 'select' };
@@ -12171,8 +12447,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
           kind: 'scrub' };
       }
       if (w.assembling > 0.25) {
-        return { text: 'A filament is at peak growth right now — ×' +
-          RS.web.bonusFor(game).toFixed(2) + ' while it lasts. Crystallise before it finishes.',
+        return { text: 'A filament is assembling *now*. Present day is the wrong time — crystallise while it is still growing.',
           kind: 'express' };
       }
       return { text: 'Nothing is assembling at ' + w.tGyr.toFixed(1) +
@@ -12184,9 +12459,8 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
           kind: 'select' };
       }
       const d = Math.round(s.blockNode.distance * 100);
-      return { text: s.blockNode.block.name + ' is ' + d +
-        '% unlike ours. The essences are the same essences. ×' +
-        RS.ensemble.bonusFor(game).toFixed(2) + ' to recognise one under these laws.',
+      return { text: 'The same system, twice: ours, and ' + s.blockNode.block.name +
+        ' (' + d + '% unlike). Leave and physics restores.',
         kind: 'express' };
     }
     if (s.kind === 'molecular') {
@@ -12198,7 +12472,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       }
       if (m.anomalous) {
         return { text: m.anomalous + ' molecule' + (m.anomalous > 1 ? 's' : '') +
-          ' of the wrong hand — the warm ones. ×' + RS.molecular.bonusFor(game).toFixed(2) + '.',
+          ' of the wrong hand — the warm ones. That is the find.',
           kind: 'express' };
       }
       return { text: 'Every chiral site here is the hand life chose. Sweep Σ for a sample that is not.',
@@ -12209,8 +12483,8 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       if (!sh) return { text: 'Resolving…', kind: 'wait' };
       if (sh.degenerate) {
         return { text: sh.degenerate + ' occupants share an energy without sharing a state. ' +
-          'That coincidence is where chemistry comes from — and it pays ×' +
-          RS.shells.bonusFor(game).toFixed(2) + '.', kind: 'express' };
+          'Two fighting over one place — that coincidence is where chemistry comes from.',
+          kind: 'express' };
       }
       return { text: sh.displaced + ' occupants were pushed outward because their state was taken. ' +
         'Excited, and about to fall back.', kind: 'express' };
@@ -12226,8 +12500,8 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       }
       if (f.survivors) {
         return { text: f.survivors + ' fluctuation' + (f.survivors > 1 ? 's' : '') +
-          ' never cancelled — the bright, still one. Work that. ×' +
-          RS.foam.bonusFor(game).toFixed(2) + '.', kind: 'express' };
+          ' never cancelled — the bright, still one. Work that.',
+          kind: 'express' };
       }
       return { text: 'Every pair here closes. Sweep Σ for a slab where one did not.', kind: 'select' };
     }
@@ -12247,18 +12521,26 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
           "'s biosphere changes. It is the only place you can work a world from inside.",
           kind: 'express' };
       }
-      return { text: s.planet.name + ' is ' + Math.round(ex * 100) +
-        '% expressed. Turn Σ out to see the difference from orbit.', kind: 'express' };
+      return { text: 'Turn Σ out — ' + s.planet.name +
+        "'s biosphere has changed. You can read it from orbit.", kind: 'express' };
     }
     if (s.kind === 'planet') {
       if (!game.inhabiting) {
+        if (!game.research.locomotion) {
+          return { text: 'Research Locomotion (120 Ψ) to walk this.', kind: 'research' };
+        }
         return { text: 'Take a body to touch this world. Unembodied, you can only watch it.', kind: 'embark' };
       }
       const st = RS.vessel.statusOf(game);
       if (st && st.blocked) {
-        return { text: 'This body cannot work here: ' + st.blocked +
-          (st.alternative ? '. Take the ' + st.alternative.name + ' instead.' : '. Nothing you have works here.'),
-          kind: 'blocked' };
+        const shore = RS.scenes.nearestStandable && RS.scenes.nearestStandable(game, st.arch);
+        let fix = st.alternative ? '. Take the ' + st.alternative.name + ' instead.'
+          : '. Nothing you have works here.';
+        if (/liquid/i.test(st.blocked) && shore && shore.bearing) {
+          fix = '. Shore is ' + shore.bearing +
+            (st.alternative ? ', or take the ' + st.alternative.name : '') + '.';
+        }
+        return { text: 'This body cannot work here: ' + st.blocked + fix, kind: 'blocked' };
       }
       /* The dial map lives on the pilot bar now and is permanently visible, so
        * repeating it here would spend the one line that could say something
@@ -12316,7 +12598,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     game.__lastInsight = game.insight;
   }
 
-  RS.game = { SAVE_VERSION, newGame, tryUpgrade, nextObjective, sceneObjective, progress, tickMeta };
+  RS.game = { SAVE_VERSION, newGame, tryUpgrade, nextObjective, sceneObjective, sceneVerb, recognitionHunt, progress, tickMeta };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));
 
 </script>
@@ -14541,6 +14823,26 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       ctx.beginPath();
       ctx.arc(view.cx, view.cy, R0, a0, a0 + (a1 - a0) * fill);
       ctx.stroke();
+      /* First lock: a one-shot ghost on the φ arc so the player can see which
+       * knob to drag without a paragraph. Retires after the first crystal. */
+      if (i === 0 && (game.stats.crystals || 0) === 0) {
+        const pulse = 0.45 + 0.35 * Math.sin(t * 3.2);
+        ctx.strokeStyle = hsl(187, 0.95, 0.72, pulse);
+        ctx.lineWidth = Math.max(3, px(0.016));
+        ctx.beginPath();
+        ctx.arc(view.cx, view.cy, R0 + px(0.018), a0, a1);
+        ctx.stroke();
+      }
+    }
+    if ((game.stats.crystals || 0) === 0 && n) {
+      ctx.strokeStyle = hsl(187, 0.8, 0.7, 0.28);
+      ctx.lineWidth = Math.max(1, px(0.004));
+      ctx.setLineDash([px(0.012), px(0.01)]);
+      ctx.beginPath();
+      ctx.moveTo(view.cx, view.cy);
+      ctx.lineTo(sx(n.x), sy(n.y));
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
     ctx.restore();
   }
@@ -15384,6 +15686,68 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     ctx.beginPath(); ctx.arc(rx, ry, 7, 0, TAU); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(rx - 12, ry); ctx.lineTo(rx - 8, ry);
     ctx.moveTo(rx + 8, ry); ctx.lineTo(rx + 12, ry); ctx.stroke();
+    drawExtractorMarks(ctx, game, p, s, 'globe', { cx, cy, R });
+  }
+
+  function extractorsOn(game, p) {
+    const list = game.deltas && RS.influence && RS.influence.planetKey
+      ? game.deltas[RS.influence.planetKey(p)] : null;
+    if (!list) return [];
+    const out = [];
+    for (let i = 0; i < list.length; i++) if (list[i].id === 'extractor') out.push(list[i]);
+    return out;
+  }
+
+  /* A sited extractor is a mark on the world, not a cache key. Same sample
+   * budgets; the glyph sits on the existing globe / slice / neighbourhood. */
+  function drawExtractorMarks(ctx, game, p, s, mode, view) {
+    const list = extractorsOn(game, p);
+    if (!list.length) return;
+    const wrap = RS.scenes.wrapDeltaLon;
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (let i = 0; i < list.length; i++) {
+      const d = list[i];
+      const lon = d.lon != null ? d.lon : s.lon;
+      const lat = d.lat != null ? d.lat : s.lat;
+      const m = d.progress || 0;
+      const a = 0.38 + m * 0.62;
+      ctx.fillStyle = hsl(40, 0.92, 0.62, a);
+      if (mode === 'globe') {
+        const dlon = wrap(lon - s.lon);
+        if (Math.abs(dlon) > Math.PI * 0.52) continue;
+        const X = view.cx + Math.sin(dlon) * view.R * Math.cos(lat);
+        const Y = view.cy - Math.sin(lat) * view.R;
+        ctx.font = '700 ' + Math.round(8 + m * 6) + 'px system-ui, sans-serif';
+        ctx.fillText('\u229E', X, Y);
+      } else if (mode === 'sideon') {
+        const span = 0.09 + s.altitude * 0.9;
+        const dlon = wrap(lon - s.lon);
+        if (Math.abs(dlon) > span) continue;
+        const w = V().w;
+        const horizon = V().cy + px(0.35);
+        const X = (0.5 + dlon / (span * 2)) * w;
+        const elev = RS.planet.elevationDetailAt(p, lon, lat);
+        const base = RS.planet.elevationDetailAt(p, s.lon, s.lat);
+        const Y = horizon + (base - elev) * px(0.5) - (6 + m * 10);
+        ctx.font = '700 ' + Math.round(10 + m * 8) + 'px system-ui, sans-serif';
+        ctx.fillText('\u229E', X, Y);
+      } else if (mode === 'freeroam') {
+        const w = V().w, h = V().h;
+        const span = 0.16 * (1 + s.altitude * 2.4);
+        const FW = RS.scenes.FREE_W, FH = RS.scenes.FREE_H;
+        const spanLat = span * (FH / FW);
+        const dlon = wrap(lon - s.lon);
+        const dlat = lat - s.lat;
+        if (Math.abs(dlon) > span || Math.abs(dlat) > spanLat) continue;
+        const X = w * 0.5 + (dlon / (span * 2)) * w;
+        const Y = h * 0.5 - (dlat / (spanLat * 2)) * h;
+        ctx.font = '700 ' + Math.round(11 + m * 7) + 'px system-ui, sans-serif';
+        ctx.fillText('\u229E', X, Y);
+      }
+    }
+    ctx.restore();
   }
 
   function atmosphereHue(p) {
@@ -15631,6 +15995,8 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     // ── agents ──
     for (const a of s.agents) drawAgent(ctx, game, a, horizon, vscale, base, prof.elev, n, w);
 
+    drawExtractorMarks(ctx, game, p, s, 'sideon');
+
     // ── the player's body ──
     drawBody(ctx, game, horizon, vscale, base, w);
   }
@@ -15840,6 +16206,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     }
 
     drawVesselGlyph(ctx, game, w * 0.5, h * 0.5);
+    drawExtractorMarks(ctx, game, p, s, 'freeroam');
     /* Heading tick so the map reads as a body, not a cursor. */
     const body = game.body;
     const hd = body.heading || 0;
@@ -16605,7 +16972,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 
   function init(game, bus) {
     for (const id of ['insight-val', 'rate-val', 'gnosis-val', 'progress-fill', 'progress-pct',
-      'tier-name', 'tier-sci', 'layer-name', 'layer-rules', 'objective',
+      'tier-name', 'tier-sci', 'layer-name', 'layer-rules', 'objective', 'verb',
       'toasts', 'readout', 'drawer', 'drawer-body', 'drawer-title', 'drawer-tabs',
       'btn-drawer-close', 'beat-hint', 'btn-menu',
       'scene-tag', 'body-bar', 'btn-contact', 'contact-hint']) {
@@ -16902,7 +17269,8 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       setText('layer-rules', p.type.name + ' · ' + Math.round(p.surfaceTemp) + ' K · ' +
         p.gravity.toFixed(2) + ' g · ' +
         (p.pressure < 0.01 ? 'no atmosphere' : p.pressure.toFixed(2) + ' bar') +
-        (p.biosphere ? ' · ' + p.biosphere.stage.name : ''));
+        (p.biosphere ? ' · ' + p.biosphere.stage.name : '') +
+        (RS.influence.expressionOn(game, p) > 0.005 ? ' · expressed from within' : ''));
       el['layer-name'].style.color = hsl(p.type.hue, 0.75, 0.72);
     } else {
       setText('layer-name', band.name.toUpperCase() + (ghost ? ' · GHOST' : ''));
@@ -16914,6 +17282,11 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 
     const obj = RS.game.sceneObjective(game);
     setText('objective', obj.text);
+    if (el.verb) {
+      const v = RS.game.sceneVerb(game);
+      setText('verb', v);
+      el.verb.dataset.verb = v;
+    }
 
     /* Scene tag: which of the three worlds the player is in, and — critically —
      * which mode the dials are in, because that is the one thing they must
@@ -17257,9 +17630,24 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     const band = RS.spectrum.nearestBand(D.value);
     const err = Math.abs(D.value - band.centre);
     const hz = err * RS.audio.BEAT_SCALE;
-    const show = err < band.width * 2.2 && err > 0.02;
+    const showBeat = err < band.width * 2.2 && err > 0.02;
+    const first = (game.stats.crystals || 0) === 0;
+    const show = showBeat || first;
+    if (!el['beat-hint']) return;
     el['beat-hint'].style.opacity = show ? '1' : '0';
-    if (show) setText('beat-hint', 'beat ' + hz.toFixed(2) + ' Hz — slow it to zero');
+    if (first && !showBeat) {
+      setText('beat-hint', 'Swing wide of the knob for fine control');
+    } else if (showBeat) {
+      setText('beat-hint', 'beat ' + hz.toFixed(2) + ' Hz — slow it to zero');
+    }
+  }
+
+  function pulseSceneTag() {
+    const tag = el['scene-tag'];
+    if (!tag) return;
+    tag.classList.remove('hint');
+    void tag.offsetWidth;
+    tag.classList.add('hint');
   }
 
   // --- toasts --------------------------------------------------------------
@@ -17780,10 +18168,13 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 
     // structures
     const placed = RS.influence.structuresOn(game, p);
+    const hereRate = RS.influence.passiveFrom(game, p);
     const exRate = RS.influence.extractorRate(game);
+    const hasEx = placed.some(x => x.struct.id === 'extractor');
     h += '<h3 style="margin-top:12px">Structures <em>upkeep ' +
       RS.influence.totalUpkeep(game).toFixed(1) + '/' + fmt(game.passiveRate) +
-      (exRate > 0.001 ? ' · seams +' + exRate.toFixed(2) + '/s' : '') + '</em></h3>';
+      (hasEx ? ' · seams +' + hereRate.toFixed(2) + '/s from this world'
+        : (exRate > 0.001 ? ' · seams +' + exRate.toFixed(2) + '/s' : '')) + '</em></h3>';
     if (placed.length) {
       h += '<div class="list">';
       for (const x of placed) {
@@ -18031,7 +18422,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   RS.ui = {
     setNotifyLevel, init, render, toast, toggleDrawer, openDrawer, closeDrawer, renderDrawer, renderTabs, setText, TABS,
     worldHTML, vesselsHTML, contactHTML, codexHTML, upgradesHTML, settingsHTML,
-    toggleDebug, renderDebug, setDebugOpen,
+    toggleDebug, renderDebug, setDebugOpen, pulseSceneTag,
     get drawerOpen() { return drawerOpen; },
     get debugOpen() { return debugOpen; }
   };
@@ -18111,13 +18502,27 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     });
 
     bus.on('node:crystallise', ({ node, amount, man, recognition }) => {
+      const first = game.stats.crystals === 1;
       RS.audio.crystal(man.bandIndex, man.rarity, man.potency);
-      RS.feel.FX.crystallise(node.x, node.y, man.hue, man.rarity, amount);
-      if (man.rarity >= 2) {
+      if (first) {
+        /* The first lock is the loudest event in the game. Later crystals
+         * stay quieter so this one remains the lesson. */
+        RS.audio.discover(1.5);
+        RS.feel.FX.discovery(man.hue, 1.35);
+        RS.feel.FX.crystallise(node.x, node.y, man.hue, Math.max(2, man.rarity), amount);
         RS.ui.toast({
-          kind: 'rare', icon: man.glyph, hue: man.hue, ms: 3000,
-          title: man.name, body: '★'.repeat(man.rarity) + ' · ' + RS.core.fmt(amount) + ' Ψ'
+          kind: 'major', icon: man.glyph, hue: man.hue, ms: 5200,
+          title: 'You just held a layer',
+          body: '+' + RS.core.fmt(amount) + ' Ψ. Swing wide of a knob for fine control.'
         });
+      } else {
+        RS.feel.FX.crystallise(node.x, node.y, man.hue, man.rarity, amount);
+        if (man.rarity >= 2) {
+          RS.ui.toast({
+            kind: 'rare', icon: man.glyph, hue: man.hue, ms: 3000,
+            title: man.name, body: '★'.repeat(man.rarity) + ' · ' + RS.core.fmt(amount) + ' Ψ'
+          });
+        }
       }
     });
 
@@ -18244,10 +18649,10 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
             : 'Filaments and voids.' },
         ensemble: { hue: 210, icon: '∵',
           title: sc => 'level ' + (sc.ensemble ? sc.ensemble.family : 'I') + ' ensemble',
-          body: () => 'Alternative blocks of law. Turn Δ to stand in one — the constants change under you.' },
+          body: () => 'The same system, twice. Turn Δ to stand in other laws — leaving restores ours.' },
         foam: { hue: 291, icon: '∴',
           title: () => 'quantum foam',
-          body: () => 'Nothing persists at this scale, including you. Pairs borrow existence and pay it back.' },
+          body: () => 'Nothing persists here, including you. Find the pair that never cancelled — the bright, still one.' },
         molecular: { hue: 196, icon: '⌬',
           title: sc => sc.molecule && sc.molecule.bias > 0.5 ? 'homochiral chemistry' : 'racemic chemistry',
           body: sc => sc.molecule && sc.molecule.bias > 0.5
@@ -18261,7 +18666,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
           body: sc => {
             const why = RS.cellular.reasonSterile(sc.planet);
             if (why) return 'Nothing to be inside here — ' + why + '.';
-            return 'Inside ' + sc.planet.name + '. What you crystallise here, it becomes.';
+            return 'Inside ' + sc.planet.name + '. Crystallise here and the world changes — you will see it from orbit.';
           } }
       };
       const a = ARRIVAL[kind] || ARRIVAL.field;
@@ -18388,6 +18793,15 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
         body: 'τ ' + dm.time + ' · Σ ' + dm.space + ' · Δ ' + dm.phase +
           ' · φ ' + dm.frequency + '. Drag the world to shove.'
       });
+      if (game.scene.kind === 'planet' && !game.flags.cameraHint) {
+        game.flags.cameraHint = true;
+        RS.ui.toast({
+          kind: 'info', icon: 'C', hue: 200, ms: 4200,
+          title: 'Two cameras, one ground',
+          body: 'C switches SIDE-ON and MAP; the ground is the same. Tap the ground to survey.'
+        });
+        if (RS.ui.pulseSceneTag) RS.ui.pulseSceneTag();
+      }
     });
 
     bus.on('vessel:disembark', ({ arch }) => {
@@ -18445,16 +18859,17 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
         title: 'Extracted ' + RS.core.fmt(amount) + ' ' + (c ? c.name : id) });
     });
 
-    bus.on('place:pulse', ({ amount, first, extracted }) => {
+    bus.on('place:pulse', ({ amount, first, extracted, biome, seam }) => {
       RS.audio.click(0.4 + Math.min(0.5, amount / 12), 0.55);
       RS.feel.buzz('tick');
-      /* Frequent pulses stay a click. The first read of a world is the one
-       * that should name itself — after that, the number in the topbar pops. */
+      /* Frequent pulses stay a click. The first read of a world names the
+       * patch — biome and seam — so the tap is a survey, not a farm. */
       if (first && !extracted) {
+        const where = biome && biome.name ? biome.name : 'this patch';
         RS.ui.toast({
-          kind: 'info', icon: '◎', hue: 42, ms: 1800,
-          title: 'World read',
-          body: '+' + RS.core.fmt(amount) + ' Ψ from this patch'
+          kind: 'info', icon: '◎', hue: 42, ms: 2400,
+          title: where,
+          body: (seam ? seam + ' underfoot. ' : '') + '+' + RS.core.fmt(amount) + ' Ψ'
         });
       }
     });
@@ -18503,6 +18918,27 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     });
 
     // ── contact ──────────────────────────────────────────────────────────
+    bus.on('discover:civ', ({ star }) => {
+      RS.audio.discover(1.35);
+      RS.feel.FX.discovery(45, 1.2);
+      RS.ui.toast({
+        kind: 'major', icon: '◍', hue: 45, ms: 7000,
+        title: 'SOMEONE IS HERE — ' + star.name.toUpperCase(),
+        body: 'An amber ring. Civilisations are rare. Tap it, then turn Σ inward and tune to their carrier.'
+      });
+    });
+
+    bus.on('contact:warming', ({ planet, civ, stage }) => {
+      RS.audio.seat(0.25 + stage * 0.12);
+      RS.feel.vignette(0.22 + stage * 0.12);
+      RS.ui.toast({
+        kind: 'info', icon: '◉', hue: civ.disposition.hue, ms: 3200,
+        title: stage === 1 ? 'A stirring' : 'They are beginning to notice',
+        body: civ.name + ' on ' + planet.name +
+          (stage === 1 ? ' has not seen you yet.' : ' is warming toward awareness. Hold the carrier.')
+      });
+    });
+
     bus.on('contact:detected', ({ planet, civ }) => {
       /* They noticed you first. This is deliberately unsettling and it is the
        * only event in the game where something else acts on you. */
@@ -19345,38 +19781,10 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
         body: 'The baryonic layer kept accreting: +' + RS.core.fmt(game.__offline.gained) + ' Ψ'
       });
     }
-    if (game.stats.crystals === 0) firstRunHints();
 
     acc = 0; lastT = 0; saveAcc = 0; fieldAcc = 0;
     if (rafId) cancelAnimationFrame(rafId);
     rafId = requestAnimationFrame(loop);
-  }
-
-  /* First run. Four staggered cards used to overlap each other and the world
-   * they were describing; now they arrive one at a time, well spaced, and each
-   * has retired before the next appears. Deliberately shown at `major` so the
-   * notification setting cannot hide the only tutorial the game has — and
-   * deliberately only four, because the guide is written against live state and
-   * pointing at it is worth more than any amount of text here. */
-  const FIRST_RUN = [
-    { at: 0, icon: '◉', hue: 205, title: 'You are a point of consciousness',
-      body: 'You cannot move. You can only change what is rendered to you.' },
-    { at: 6500, icon: 'φ', hue: 187, title: 'Turn the φ dial',
-      body: 'Drag it in a circle. Swing wide for fine control, and listen for the beat.' },
-    { at: 13000, icon: '◈', hue: 43, title: 'Hold the lock',
-      body: 'Line up the arcs around yourself. Coherence fills while you hold.' },
-    { at: 19500, icon: '?', hue: 200, title: 'Lost? Tap ? at any time',
-      body: 'The guide describes whatever is in front of you right now.' }
-  ];
-
-  function firstRunHints() {
-    for (const h of FIRST_RUN) {
-      const fire = () => RS.ui.toast({
-        kind: 'major', icon: h.icon, hue: h.hue, ms: 5200,
-        title: h.title, body: h.body
-      });
-      if (h.at === 0) fire(); else setTimeout(fire, h.at);
-    }
   }
 
   function onResize() {

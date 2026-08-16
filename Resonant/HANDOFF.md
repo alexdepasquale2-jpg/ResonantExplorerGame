@@ -31,7 +31,7 @@ That one decision is why a 22-rung ladder of scopes costs almost nothing, why
 saves are ~2 kB, and why an alternative-physics universe is possible at all.
 
 ```bash
-node tools/simtest.js      # 1775 assertions — must be green before you commit
+node tools/simtest.js      # 1806 assertions — must be green before you commit
 node tools/build.mjs       # emits dist/resonant.html, one self-contained file
 python3 -m http.server 8000   # then open /Resonant/index.html
 ```
@@ -103,7 +103,7 @@ stays embark-blocked.
 
 ### 2.3 The test suite is the specification
 
-`tools/simtest.js` is 1775 assertions and about half the value of this
+`tools/simtest.js` is 1806 assertions and about half the value of this
 repository. It runs headless in Node against the real modules (including
 `ui.js`, `audio.js` — the HTML builders are pure string functions).
 
@@ -248,14 +248,16 @@ rather than a number.
 
 ## 7. What to do next, in order of value
 
-The vessel open-world pass, its follow-up, and the world-visuals / earn pass
-have landed: planetary geology, lon/lat freeroam plus rich side-on (vegetation,
-clouds, slope-lit neighbourhood, globe specular and city lights), place-aware
-vessel glyphs, galaxy vacuum drift as a real `sx/sy` address change with a
-short toast, a player-facing camera cycle (`C` / scene tag), downhill fall-line
-slides, a wider rumour census, cheaper bloom in the attunement field, guide
-copy for riding a culture from orbit, **extractors that actually pay idle Ψ**,
-and a **world pulse** clicker (`game.surveys[planetKey] = { work, lastAt }`).
+The vessel open-world pass, its follow-up, the world-visuals / earn pass,
+and the player-facing dopamine pass (`docs/IDEAL_PLAY.md` P0–P8) have landed:
+planetary geology, lon/lat freeroam plus rich side-on, place-aware vessel
+glyphs, galaxy vacuum drift, a player-facing camera cycle (`C` / scene tag),
+**extractors that actually pay idle Ψ**, a **world pulse**, then the firsts:
+one nearby baryonic node as the first lock, descent naming a star rather
+than a shop, land snapping to shore, Locomotion priced on the globe, first
+amber as a named rumour, extractors as a glyph on the world, recognition
+as a hunt after two contexts, camera literacy as a one-shot toast. Hold
+stays the game.
 
 What is still worth doing:
 
@@ -286,7 +288,7 @@ What is still worth doing:
 ## 9. Verification checklist before you push
 
 ```bash
-node tools/simtest.js     # 1775 assertions, zero failures
+node tools/simtest.js     # 1806 assertions, zero failures
 node tools/build.mjs      # single file still builds
 ```
 
