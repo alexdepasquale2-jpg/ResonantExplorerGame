@@ -86,6 +86,7 @@
     noiseBuf = makeNoise(0.5);
     buildDrone();
     buildBed();
+    buildMachinery();
     buildRamp();
     started = true;
     return true;
@@ -214,6 +215,49 @@
     bedGain.connect(master);
     bedGain.connect(verbGain);
     bedSrc.start();
+  }
+
+  let machSrc = null, machFilter = null, machGain = null;
+
+  function buildMachinery() {
+    machGain = ctx.createGain(); machGain.gain.value = 0;
+    machFilter = ctx.createBiquadFilter();
+    machFilter.type = 'bandpass';
+    machFilter.frequency.value = 180;
+    machFilter.Q.value = 2.2;
+    machSrc = ctx.createBufferSource();
+    machSrc.buffer = makeNoise(2);
+    machSrc.loop = true;
+    machSrc.connect(machFilter);
+    machFilter.connect(machGain);
+    machGain.connect(master);
+    machSrc.start();
+  }
+
+  const MACH = {
+    walker: { freq: 140, q: 1.8 }, rover: { freq: 320, q: 0.9 },
+    flier: { freq: 480, q: 1.2 }, lander: { freq: 260, q: 3.5 },
+    swimmer: { freq: 95, q: 1.4 }, ciliate: { freq: 2200, q: 4.5 },
+    harvester: { freq: 110, q: 1.5 }, courier: { freq: 380, q: 2.8 },
+    probe: { freq: 720, q: 6 }, flucton: { freq: 1600, q: 3 },
+    weaver: { freq: 55, q: 0.7 }, mote: { freq: 400, q: 8 }
+  };
+
+  function updateMachinery(archId, rate, speed) {
+    if (!started || !enabled || !machGain) return;
+    const now = ctx.currentTime;
+    const m = MACH[archId] || MACH.mote;
+    const exert = clamp01(Math.abs(rate) * 0.7 + speed * 0.5);
+    machFilter.frequency.setTargetAtTime(m.freq * (0.85 + exert * 0.4), now, 0.08);
+    machFilter.Q.setTargetAtTime(m.q, now, 0.12);
+    machGain.gain.setTargetAtTime(exert * 0.028, now, 0.06);
+  }
+
+  function footfall(archId) {
+    if (!started || !enabled) return;
+    const m = MACH[archId] || MACH.walker;
+    blip(m.freq * 1.4, 'triangle', 0.04, 0.002, 0.08, true);
+    noiseBurst(0.02, 0.04, m.freq * 2.2, 2);
   }
 
   /* `pressure` scales the planet surface bed, because wind is a thing air does
@@ -481,7 +525,7 @@
   RS.audio = {
     BAND_TONE, BEAT_SCALE,
     init, unlock, setEnabled, isEnabled, isReady, suspend, resume,
-    updateDrone, updateRamp, updateBed, BEDS,
+    updateDrone, updateRamp, updateBed, updateMachinery, footfall, BEDS,
     click, seat, step, crystal, discover, upheaval, purchase, deny
   };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));

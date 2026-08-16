@@ -4185,6 +4185,7 @@ const posOut = { x: 0, y: 0, z: 0, r: 0 };
   const prof = RS.scenes.terrainProfile(g, 0.09);
   assert(prof.elev && prof.biome && prof.n === RS.scenes.PROFILE_N,
     'terrainProfile returns elev + biome arrays');
+  assert(prof.n === 96, 'profile sample budget stays at ninety-six');
   assert(prof.biome[0] && prof.biome[0].id, 'profile samples have biome identities');
   let biomeVariety = 0;
   const seen = Object.create(null);
@@ -4198,16 +4199,32 @@ const posOut = { x: 0, y: 0, z: 0, r: 0 };
   g.inhabiting = true;
   g.scene.altitude = 0;
   g.scene.forceCam = null;
-  assert(RS.scenes.cameraMode(g) === 'sideon', 'near-ground inhabiting uses side-on');
+  assert(RS.scenes.cameraMode(g) === 'globe', 'inhabiting uses the globe');
   g.scene.altitude = 0.4;
-  assert(RS.scenes.cameraMode(g) === 'freeroam', 'altitude above threshold uses freeroam');
-  g.scene.forceCam = 'sideon';
-  assert(RS.scenes.cameraMode(g) === 'sideon', 'forceCam overrides altitude');
-  g.scene.forceCam = null;
+  assert(RS.scenes.cameraMode(g) === 'globe', 'altitude does not swap camera');
   g.inhabiting = false;
   assert(RS.scenes.cameraMode(g) === 'globe', 'observing uses the globe');
 
-  /* Lon/lat freeroam: heading north changes lat, crossing antimeridian wraps. */
+  /* Walker gait is pulsed; rover coasts when tau is centred. */
+  const envSurf = {
+    medium: RS.vessel.MEDIUM.SURFACE, gravity: 1, pressure: 1, temperature: 288,
+    flux: 1, roughness: 0.2, slope: 0, fallEast: 0, fallNorth: 0,
+    biomeId: 'grass', hasMinds: false, label: 'T', groundY: 0
+  };
+  const wWalk = RS.vessel.newBody('walker');
+  wWalk.heading = 0; wWalk.gaitPhase = 0; wWalk.y = 0;
+  RS.vessel.integrate(g, wWalk, envSurf, { rate: 0, heading: 0, vert: 0.5, band: 0 }, 0.05);
+  assert(Math.hypot(wWalk.vx, wWalk.vz) < 0.02, 'walker does not slide at a step valley');
+  const wRover = RS.vessel.newBody('rover');
+  wRover.heading = 0; wRover.vx = 2.5; wRover.vz = 0; wRover.y = 0;
+  const wWalk2 = RS.vessel.newBody('walker');
+  wWalk2.heading = 0; wWalk2.vx = 2.5; wWalk2.vz = 0; wWalk2.y = 0;
+  RS.vessel.integrate(g, wRover, envSurf, { rate: 0, heading: 0, vert: 0.5, band: 0 }, 0.12);
+  RS.vessel.integrate(g, wWalk2, envSurf, { rate: 0, heading: 0, vert: 0.5, band: 0 }, 0.12);
+  assert(Math.hypot(wRover.vx, wRover.vz) > Math.hypot(wWalk2.vx, wWalk2.vz),
+    'rover coasts farther than walker when tau is centred');
+
+  /* Lon/lat on the globe: heading north changes lat, crossing antimeridian wraps. */
   g.inhabiting = true;
   g.body = RS.vessel.newBody('walker');
   g.body.vx = 0; g.body.vz = 4; g.body.vy = 0;
@@ -4223,14 +4240,11 @@ const posOut = { x: 0, y: 0, z: 0, r: 0 };
   assert(g.scene.lat < Math.PI / 2, 'latitude clamps at the pole');
   assert(Number.isFinite(g.scene.lat) && Number.isFinite(g.scene.lon), 'pose stays finite at the pole');
 
-  /* Mode switch does not teleport. */
+  /* Pose is unchanged while inhabiting — no camera teleport. */
   const lonHold = g.scene.lon, latHold = g.scene.lat;
-  g.scene.forceCam = 'freeroam';
   RS.scenes.tick(g, nullBus, 0);
-  g.scene.forceCam = 'sideon';
-  RS.scenes.tick(g, nullBus, 0);
-  near(g.scene.lon, lonHold, 1e-9, 'camera switch keeps longitude');
-  near(g.scene.lat, latHold, 1e-9, 'camera switch keeps latitude');
+  near(g.scene.lon, lonHold, 1e-9, 'tick keeps longitude');
+  near(g.scene.lat, latHold, 1e-9, 'tick keeps latitude');
 
   /* Save still only persists lon/lat/t, not a heightmap. */
   const serial = RS.save.serialise(g);
@@ -4263,6 +4277,12 @@ const posOut = { x: 0, y: 0, z: 0, r: 0 };
     for (let i = 0; i < 40; i++) RS.scenes.tick(g, nullBus, 1 / 60);
     assert(Number.isFinite(g.body.x) && Number.isFinite(g.body.y), 'cytoplasm pose stays finite');
     assert(Math.hypot(g.body.x, g.body.y) <= 0.93 + 1e-3, 'cytoplasm confines to the membrane');
+    const cyEnv = RS.vessel.environmentFor(g);
+    g.body.vx = 0.8; g.body.vy = 0.6;
+    for (let i = 0; i < 30; i++) {
+      RS.vessel.integrate(g, g.body, cyEnv, { rate: 0, heading: 0, vert: 0.5, band: 0 }, 1 / 60);
+    }
+    assert(Math.hypot(g.body.vx, g.body.vy) < 0.08, 'ciliate stops when tau is centred');
     RS.scenes.disembark(g, nullBus);
     assert(!g.inhabiting, 'cellular disembark round-trips');
   } else {
@@ -4300,25 +4320,16 @@ const posOut = { x: 0, y: 0, z: 0, r: 0 };
   assert(dumped2.ok && dumped2.dump.indexOf('biome') >= 0, 'debug dump underfoot names the biome');
   const tel = RS.debug.teleport(g, '0,45');
   assert(tel.ok && Math.abs(g.scene.lat - 45 * Math.PI / 180) < 1e-6, 'debug teleport sets latitude');
-  const cam = RS.debug.setCam(g, 'freeroam');
-  assert(cam.ok && g.scene.forceCam === 'freeroam', 'debug force camera mode');
+  const cam = RS.debug.setCam(g, 'globe');
+  assert(cam.ok && g.scene.forceCam === 'globe', 'debug force globe');
+  assert(!RS.debug.setCam(g, 'sideon').ok, 'side-on camera retired');
 
-  /* Player-facing camera cycle: AUTO → SIDE-ON → MAP → AUTO. */
   g.inhabiting = true;
   g.scene.kind = 'planet';
   g.scene.forceCam = null;
-  assert(RS.scenes.cameraLabel(g) === 'AUTO', 'auto camera labels as AUTO');
-  const c1 = RS.scenes.cycleCamera(g);
-  assert(c1.ok && c1.forceCam === 'sideon' && RS.scenes.cameraLabel(g) === 'SIDE-ON',
-    'first cycle locks side-on');
-  const c2 = RS.scenes.cycleCamera(g);
-  assert(c2.ok && c2.forceCam === 'freeroam' && RS.scenes.cameraLabel(g) === 'MAP',
-    'second cycle locks the neighbourhood map');
-  const c3 = RS.scenes.cycleCamera(g);
-  assert(c3.ok && c3.forceCam === null && RS.scenes.cameraLabel(g) === 'AUTO',
-    'third cycle returns to altitude auto');
+  assert(RS.scenes.cameraLabel(g) === 'ON GLOBE', 'inhabiting label is ON GLOBE');
+  assert(!RS.scenes.cycleCamera(g).ok, 'player camera cycle retired');
   g.inhabiting = false;
-  assert(!RS.scenes.cycleCamera(g).ok, 'cycle refuses while observing');
   assert(RS.scenes.cameraLabel(g) === 'OBSERVING', 'observing label is unchanged');
 }
 

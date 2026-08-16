@@ -410,6 +410,11 @@
       buzz('deny');
       shake(0.05);
       flash(0, 0.08, 0.9);
+    },
+    footfall(hue) {
+      if (state.reduceMotion) return;
+      buzz('tap');
+      ripple(0, 0, { r0: 0.7, r1: 0.02, life: 0.2, hue: hue || 130, width: 1.1 });
     }
   };
 

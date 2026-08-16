@@ -6370,7 +6370,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       reader: true
     },
     {
-      id: 'symbiont', name: 'Symbiont', glyph: '❋', hue: 340,
+      id: 'symbiont', name: 'Symbiont', glyph: '◈', hue: 340,
       blurb: 'No body of its own. Rides a living mind and leans on it — you influence, you do not command.',
       medium: [MEDIUM.SURFACE, MEDIUM.LIQUID, MEDIUM.GAS, MEDIUM.ORBIT],
       mass: 0.05, thrust: 0, dragC: 1, liftC: 0, grip: 0,
@@ -6605,8 +6605,28 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       mind: null, mindState: null, mindAddr: 0,
       /* Direct steering vector from the field drag gesture, if any. */
       steerX: 0, steerY: 0,
-      lastFire: 0
+      lastFire: 0,
+      gaitPhase: 0, strokePhase: 0, bank: 0, lastStep: 0
     };
+  }
+
+  function angleDiff(from, to) {
+    let d = to - from;
+    while (d > Math.PI) d -= TAU;
+    while (d < -Math.PI) d += TAU;
+    return d;
+  }
+
+  function turnRateOf(arch) {
+    switch (arch.id) {
+      case 'walker': return 5.2;
+      case 'rover': return 2.4;
+      case 'harvester': return 2.8;
+      case 'flier': return 3.6;
+      case 'swimmer': return 4.0;
+      case 'ciliate': return 6.5;
+      default: return 3.2 / Math.sqrt(arch.mass || 1);
+    }
   }
 
   function archOf(body) { return BY_ID[body.archId] || BY_ID.mote; }
@@ -6650,32 +6670,78 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     const authority = blocked ? 0.08 : 1;
 
     // --- thrust -----------------------------------------------------------
-    /* Heading comes from Δ, magnitude from τ, and the direct drag gesture adds
-     * on top — so a player can fly with dials alone, or grab the field and
-     * steer, or both. Neither is the "real" control scheme.
-     *
-     * On a planet surface, heading is a compass bearing: τ drives the tangent
-     * plane (east = vx, north = vz) and Σ is the vertical. Elsewhere the old
-     * mapping stands — heading's sine is still a vertical in liquids and gas
-     * because those media do not have a longitude to walk. */
+    /* Δ is facing; τ is gait/throttle; field drag yaws heading. On a planet
+     * surface each archetype expresses those differently — walker steps,
+     * rover coasts, flier banks. */
     const powered = body.charge > 0.5 ? 1 : 0.15;
     const accel = arch.thrust / arch.mass * authority * powered;
     const onPlanetSurface = env.medium === MEDIUM.SURFACE && game.scene && game.scene.kind === 'planet';
     let ax, ay, az = 0;
-    if (onPlanetSurface) {
+
+    if (onPlanetSurface && arch.id !== 'symbiont') {
+      const tr = turnRateOf(arch) * authority / Math.max(0.35, arch.grip);
+      const herr = angleDiff(body.heading, ctl.heading);
+      body.heading += clamp(herr, -tr * dt, tr * dt);
+      body.heading += (body.steerX * 2.8 + body.steerY * 0.4) * dt * authority;
+
+      let thrustMag = 0;
+      if (arch.id === 'walker' || arch.id === 'harvester') {
+        body.gaitPhase = (body.gaitPhase || 0) + dt * (1.4 + Math.abs(ctl.rate) * 3.2);
+        const step = Math.abs(ctl.rate) * Math.max(0, Math.sin(body.gaitPhase * TAU));
+        thrustMag = step * accel * (arch.id === 'harvester' ? 0.62 : 1);
+        if (step > 0.82 && body.gaitPhase - (body.lastStep || 0) > 0.45) {
+          body.lastStep = body.gaitPhase;
+          body.__footfall = 1;
+        }
+      } else if (arch.id === 'rover') {
+        thrustMag = ctl.rate * accel;
+        const steer = clamp(herr, -1, 1) * Math.min(1, Math.hypot(body.vx, body.vz) * 2.2);
+        body.heading += steer * dt * 2.8 * authority;
+      } else if (arch.id === 'lander') {
+        body.gaitPhase = (body.gaitPhase || 0) + dt * 9;
+        thrustMag = Math.abs(ctl.rate) * (Math.sin(body.gaitPhase * TAU) > 0.2 ? accel * 1.3 : 0);
+        ax = Math.cos(body.heading) * thrustMag * Math.sign(ctl.rate || 1);
+        az = Math.sin(body.heading) * thrustMag * Math.sign(ctl.rate || 1);
+      } else if (arch.id === 'flier') {
+        const spd = Math.hypot(body.vx, body.vz);
+        body.bank = damp(body.bank || 0, herr * Math.min(1, spd * 1.6), 7, dt);
+        body.heading += body.bank * dt * 2.4 * authority;
+        thrustMag = ctl.rate * accel * (spd < 0.06 && ctl.rate > 0 ? 0.15 : 1);
+      } else {
+        thrustMag = ctl.rate * accel;
+      }
+      if (arch.id !== 'lander') {
+        ax = Math.cos(body.heading) * thrustMag;
+        az = Math.sin(body.heading) * thrustMag;
+      }
+      ay = 0;
+    } else if (onPlanetSurface && arch.id === 'symbiont') {
+      body.heading = ctl.heading;
+      ax = 0; az = 0; ay = 0;
+    } else if (onPlanetSurface) {
       ax = Math.cos(ctl.heading) * ctl.rate * accel;
       az = Math.sin(ctl.heading) * ctl.rate * accel;
-      ax += body.steerX * accel; az += body.steerY * accel;
       ay = 0;
+    } else if (env.medium === MEDIUM.LIQUID && (arch.id === 'swimmer' || arch.id === 'ciliate')) {
+      body.strokePhase = (body.strokePhase || 0) + dt * (arch.id === 'ciliate' ? 14 : 5) * (0.3 + Math.abs(ctl.rate));
+      const asym = arch.id === 'ciliate'
+        ? Math.max(0, Math.sin(body.strokePhase * TAU))
+        : Math.max(0, Math.sin(body.strokePhase * TAU)) * (0.35 + Math.abs(ctl.rate));
+      body.heading += angleDiff(body.heading, ctl.heading) * dt * turnRateOf(arch) * authority;
+      body.heading += body.steerX * 2.2 * dt;
+      ax = Math.cos(body.heading) * asym * accel;
+      ay = Math.sin(body.heading) * asym * accel * 0.35;
     } else {
-      let tx = Math.cos(ctl.heading) * ctl.rate;
-      let ty = Math.sin(ctl.heading) * ctl.rate;
-      tx += body.steerX; ty += body.steerY;
+      body.heading += angleDiff(body.heading, ctl.heading) * dt * turnRateOf(arch) * authority * 0.7;
+      body.heading += body.steerX * 2.2 * dt;
+      let tx = Math.cos(body.heading) * ctl.rate;
+      let ty = Math.sin(body.heading) * ctl.rate;
+      tx += body.steerX * 0.35; ty += body.steerY * 0.35;
       const mag = Math.hypot(tx, ty);
       if (mag > 1) { tx /= mag; ty /= mag; }
       ax = tx * accel; ay = ty * accel;
     }
-    const tmag = Math.hypot(ctl.rate, body.steerX, body.steerY);
+    const tmag = Math.abs(ctl.rate) + Math.hypot(body.steerX, body.steerY) * 0.35;
 
     // --- gravity ----------------------------------------------------------
     /* On a surface, "down" is +y in scene space (the surface view is a side-on
@@ -6770,6 +6836,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       let grip = arch.grip;
       if (env.biomeId === 'ice') grip *= 0.22;
       else if (env.biomeId === 'desert' || env.biomeId === 'savanna') grip *= 0.72;
+      if (arch.id === 'rover' && Math.abs(ctl.rate) < 0.08) grip *= 0.18;
       const gf = Math.exp(-grip * 3.4 * dt);
       body.vx *= gf;
       body.vz *= gf;
@@ -6778,18 +6845,9 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     body.x += body.vx * dt;
     body.y += body.vy * dt;
 
-    /* Heading follows travel when moving, so the body visibly turns into its
-     * motion rather than sliding sideways. On a planet the travel vector is
-     * east/north, not east/up. */
     const sp = onPlanetSurface
       ? Math.hypot(body.vx, body.vz)
       : Math.hypot(body.vx, body.vy);
-    if (sp > 0.02) {
-      const want = onPlanetSurface ? Math.atan2(body.vz, body.vx) : Math.atan2(body.vy, body.vx);
-      body.heading = RS.core.turnToward
-        ? RS.core.turnToward(body.heading, want, dt * 6)
-        : want;
-    }
 
     // --- expenditure ------------------------------------------------------
     /* Charge drains with exertion and with hostility of the environment, and
@@ -9532,10 +9590,9 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       '</div></section>';
 
     if (sc.kind === 'planet') {
-      h += '<section><h3>Two cameras, one sphere</h3>' +
-        '<p class="blurb">Near the ground is the side-on slice. Climb, tap the scene tag, ' +
-        'or press <b>C</b> for the neighbourhood map. Pose is shared — switching never teleports. ' +
-        'Tap the ground to <b>pulse</b> a seam (the field\'s strike, on a world). ' +
+      h += '<section><h3>On the globe</h3>' +
+        '<p class="blurb">Observing and inhabiting use the same planet picture. ' +
+        'Σ frames height of attention on the disc. Tap the ground to <b>pulse</b> a seam. ' +
         'A sited extractor actually pays idle Ψ from that world\'s richest resource.</p></section>';
     }
     if (game.inhabiting && RS.vessel.archOf(game.body).id === 'symbiont') {
@@ -12095,44 +12152,23 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     return { w: FREE_W, h: FREE_H, css: s.__hoodCss, elev: s.__hoodElev, spanLon, spanLat };
   }
 
-  /* Dual-camera rule while inhabiting a planet:
-   *   observing            → globe
-   *   altitude / toggle    → freeroam neighbourhood
-   *   near the ground      → rich side-on slice
-   * Pose (lon, lat, altitude) is shared; switching never teleports. */
+  /* One planet picture: observing and inhabiting both use the globe. Σ frames
+   * height of attention on the same disc; altitude no longer swaps renderers. */
   function cameraMode(game) {
     const s = game.scene;
     if (!s || s.kind !== 'planet') return 'globe';
-    if (s.forceCam === 'freeroam' || s.forceCam === 'sideon' || s.forceCam === 'globe') {
-      return s.forceCam;
-    }
-    if (!game.inhabiting) return 'globe';
-    if (s.altitude > 0.22) return 'freeroam';
-    return 'sideon';
+    return 'globe';
   }
 
-  /* Player-facing cycle: AUTO → SIDE-ON → MAP → AUTO.
-   * Globe stays an observing / debug mode, not a walk cycle. */
+  /* Retired — inhabiting stays on the globe. Debug may still force globe. */
   function cycleCamera(game) {
-    const s = game.scene;
-    if (!s || s.kind !== 'planet' || !game.inhabiting) {
-      return { ok: false, reason: 'not piloting a planet' };
-    }
-    if (s.forceCam == null) s.forceCam = 'sideon';
-    else if (s.forceCam === 'sideon') s.forceCam = 'freeroam';
-    else s.forceCam = null;
-    return { ok: true, forceCam: s.forceCam, mode: cameraMode(game) };
+    return { ok: false, reason: 'inhabiting stays on the globe' };
   }
 
   function cameraLabel(game) {
     const s = game.scene;
-    if (!s || s.kind !== 'planet' || !game.inhabiting) {
-      return game.inhabiting ? 'PILOTING' : 'OBSERVING';
-    }
-    if (s.forceCam === 'freeroam') return 'MAP';
-    if (s.forceCam === 'sideon') return 'SIDE-ON';
-    if (s.forceCam === 'globe') return 'GLOBE';
-    return 'AUTO';
+    if (!s || s.kind !== 'planet') return game.inhabiting ? 'PILOTING' : 'OBSERVING';
+    return game.inhabiting ? 'ON GLOBE' : 'OBSERVING';
   }
 
   function tickPlanet(game, bus, dt) {
@@ -12300,6 +12336,12 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
         bus.emit('vessel:blocked', { reason: r.blocked, arch: RS.vessel.archOf(body) });
       } else if (!r.blocked) {
         body.__warned = false;
+      }
+      if (body.__footfall) {
+        body.__footfall = 0;
+        const arch = RS.vessel.archOf(body);
+        if (RS.audio && RS.audio.footfall) RS.audio.footfall(arch.id);
+        if (RS.feel && RS.feel.FX && RS.feel.FX.footfall) RS.feel.FX.footfall(arch.hue);
       }
     }
 
@@ -12969,7 +13011,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
             kind: 'explore' };
         }
         if (st && st.arch && st.arch.id === 'symbiont') {
-          return { text: 'The symbiont rides a mind here, or a civilisation from orbit. Tap the scene tag or C to change camera.',
+          return { text: 'The symbiont rides a mind here, or a civilisation from orbit.',
             kind: 'explore' };
         }
         return { text: 'Life here. Ride a mind with the symbiont — in orbit that is a civilisation — or turn Σ inward to enter a cell.',
@@ -12979,7 +13021,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
         return { text: 'Seams below. Tap the ground to read them, or extract with the harvester.',
           kind: 'explore' };
       }
-      return { text: 'Walk it. Tap the ground to survey a seam. C or the scene tag switches SIDE-ON / MAP.', kind: 'pilot' };
+      return { text: 'Walk it on the globe. Tap the ground to survey a seam.', kind: 'pilot' };
     }
     return nextObjective(game);
   }
@@ -13168,6 +13210,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     noiseBuf = makeNoise(0.5);
     buildDrone();
     buildBed();
+    buildMachinery();
     buildRamp();
     started = true;
     return true;
@@ -13296,6 +13339,49 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     bedGain.connect(master);
     bedGain.connect(verbGain);
     bedSrc.start();
+  }
+
+  let machSrc = null, machFilter = null, machGain = null;
+
+  function buildMachinery() {
+    machGain = ctx.createGain(); machGain.gain.value = 0;
+    machFilter = ctx.createBiquadFilter();
+    machFilter.type = 'bandpass';
+    machFilter.frequency.value = 180;
+    machFilter.Q.value = 2.2;
+    machSrc = ctx.createBufferSource();
+    machSrc.buffer = makeNoise(2);
+    machSrc.loop = true;
+    machSrc.connect(machFilter);
+    machFilter.connect(machGain);
+    machGain.connect(master);
+    machSrc.start();
+  }
+
+  const MACH = {
+    walker: { freq: 140, q: 1.8 }, rover: { freq: 320, q: 0.9 },
+    flier: { freq: 480, q: 1.2 }, lander: { freq: 260, q: 3.5 },
+    swimmer: { freq: 95, q: 1.4 }, ciliate: { freq: 2200, q: 4.5 },
+    harvester: { freq: 110, q: 1.5 }, courier: { freq: 380, q: 2.8 },
+    probe: { freq: 720, q: 6 }, flucton: { freq: 1600, q: 3 },
+    weaver: { freq: 55, q: 0.7 }, mote: { freq: 400, q: 8 }
+  };
+
+  function updateMachinery(archId, rate, speed) {
+    if (!started || !enabled || !machGain) return;
+    const now = ctx.currentTime;
+    const m = MACH[archId] || MACH.mote;
+    const exert = clamp01(Math.abs(rate) * 0.7 + speed * 0.5);
+    machFilter.frequency.setTargetAtTime(m.freq * (0.85 + exert * 0.4), now, 0.08);
+    machFilter.Q.setTargetAtTime(m.q, now, 0.12);
+    machGain.gain.setTargetAtTime(exert * 0.028, now, 0.06);
+  }
+
+  function footfall(archId) {
+    if (!started || !enabled) return;
+    const m = MACH[archId] || MACH.walker;
+    blip(m.freq * 1.4, 'triangle', 0.04, 0.002, 0.08, true);
+    noiseBurst(0.02, 0.04, m.freq * 2.2, 2);
   }
 
   /* `pressure` scales the planet surface bed, because wind is a thing air does
@@ -13563,7 +13649,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   RS.audio = {
     BAND_TONE, BEAT_SCALE,
     init, unlock, setEnabled, isEnabled, isReady, suspend, resume,
-    updateDrone, updateRamp, updateBed, BEDS,
+    updateDrone, updateRamp, updateBed, updateMachinery, footfall, BEDS,
     click, seat, step, crystal, discover, upheaval, purchase, deny
   };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));
@@ -13982,6 +14068,11 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       buzz('deny');
       shake(0.05);
       flash(0, 0.08, 0.9);
+    },
+    footfall(hue) {
+      if (state.reduceMotion) return;
+      buzz('tap');
+      ripple(0, 0, { r0: 0.7, r1: 0.02, life: 0.2, hue: hue || 130, width: 1.1 });
     }
   };
 
@@ -16028,10 +16119,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     const s = game.scene;
     const p = s.planet;
     if (!p) return;
-    const mode = RS.scenes.cameraMode(game);
-    if (mode === 'globe') drawGlobe(ctx, game, p, s);
-    else if (mode === 'freeroam') drawFreeroam(ctx, game, p, s);
-    else drawSurface(ctx, game, p, s);
+    drawGlobe(ctx, game, p, s, dt);
   }
 
   /* ── Globe texture cache ──────────────────────────────────────────────────
@@ -16132,9 +16220,118 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   /* Orbital view: the planet as a disc, sampled from the baked surface table.
    * The sample count is fixed, so this costs the same on every world. */
   const GLOBE_N = 46;
-  function drawGlobe(ctx, game, p, s) {
+  function attentionOf(game) {
+    if (!game.inhabiting || !game.dials) return 0.5;
+    const D = game.dials.space;
+    return clamp01((D.value - D.min) / Math.max(1e-6, D.max - D.min));
+  }
+
+  function globeProject(s, lon, lat, cx, cy, R) {
+    const dlon = RS.scenes.wrapDeltaLon(lon - s.lon);
+    if (Math.abs(dlon) > Math.PI * 0.52) return null;
+    return {
+      x: cx + Math.sin(dlon) * R * Math.cos(lat),
+      y: cy - Math.sin(lat) * R
+    };
+  }
+
+  function drawUnderfootApron(ctx, game, p, s, pinX, pinY, R, attention) {
+    const halfSpan = 0.032 + (1 - attention) * 0.058;
+    const prof = RS.scenes.terrainProfile(game, halfSpan);
+    const n = prof.n;
+    const body = game.body;
+    const heading = body ? body.heading : 0;
+    const mid = Math.floor(n / 2);
+    const base = prof.elev[mid];
+    const fanR = R * (0.11 + (1 - attention) * 0.09);
+    const vscale = px(0.07) * (0.55 + (1 - attention) * 0.85);
+    const dat = RS.planet.datum(p);
+
+    ctx.save();
+    ctx.translate(pinX, pinY);
+    ctx.rotate(heading);
+    ctx.globalAlpha = 0.55 + (1 - attention) * 0.35;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    for (let i = 0; i < n; i++) {
+      const u = (i / (n - 1)) - 0.5;
+      const ang = u * Math.PI * 0.62;
+      const elev = prof.elev[i] - base;
+      const r = fanR * (0.25 + Math.abs(u) * 1.5);
+      const x = Math.sin(ang) * r;
+      const y = -Math.cos(ang) * r - elev * vscale;
+      ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    const surf = prof.biome[mid] || RS.planet.BIOME_BY_ID.regolith;
+    const tg = ctx.createRadialGradient(0, -fanR * 0.2, 0, 0, 0, fanR * 1.4);
+    tg.addColorStop(0, hsl(surf.hue, surf.sat, surf.lum * 1.1, 0.92));
+    tg.addColorStop(1, hsl(surf.hue - 6, surf.sat * 0.7, surf.lum * 0.35, 0.75));
+    ctx.fillStyle = tg;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.32)';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+      const u = (i / (n - 1)) - 0.5;
+      const ang = u * Math.PI * 0.62;
+      const elev = prof.elev[i] - base;
+      const r = fanR * (0.25 + Math.abs(u) * 1.5);
+      const x = Math.sin(ang) * r;
+      const y = -Math.cos(ang) * r - elev * vscale;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    for (let i = 2; i < n - 2; i += 3) {
+      const b = prof.biome[i];
+      if (!b || prof.elev[i] < dat - 0.02) continue;
+      const u = (i / (n - 1)) - 0.5;
+      const ang = u * Math.PI * 0.62;
+      const elev = prof.elev[i] - base;
+      const r = fanR * (0.25 + Math.abs(u) * 1.5);
+      const x = Math.sin(ang) * r;
+      const y = -Math.cos(ang) * r - elev * vscale;
+      if (b.id === 'forest' || b.id === 'jungle' || b.id === 'grass') {
+        ctx.strokeStyle = hsl(b.hue, 0.5, 0.28, 0.7);
+        ctx.lineWidth = 1.1;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + (RS.core.hashF(p.hash, i) - 0.5) * 2.5, y - 4 - RS.core.hashF(p.hash, i + 40) * 5);
+        ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
+  function drawAgentsOnGlobe(ctx, game, p, s, cx, cy, R) {
+    if (!s.agents || !s.agents.length) return;
+    for (let i = 0; i < s.agents.length; i++) {
+      const a = s.agents[i];
+      const pt = globeProject(s, a.lon, a.lat, cx, cy, R);
+      if (!pt) continue;
+      const f = a.fauna;
+      const hue = f ? f.hue : 120;
+      const size = px(0.012);
+      ctx.fillStyle = hsl(hue, 0.65, 0.55, 0.85);
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, size, 0, TAU);
+      ctx.fill();
+      if (a.ridden) {
+        ctx.strokeStyle = hsl(340, 0.9, 0.72, 0.6);
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, size * 2.4, 0, TAU);
+        ctx.stroke();
+      }
+    }
+  }
+
+  function drawGlobe(ctx, game, p, s, dt) {
     const cx = V().cx, cy = V().cy;
-    const R = px(0.62);
+    const attention = attentionOf(game);
+    const zoom = game.inhabiting ? lerp(1.04, 1.14, attention) : 1;
+    const R = px(0.62) * zoom;
 
     /* Space behind. */
     ctx.fillStyle = 'rgba(3,5,10,0.55)';
@@ -16217,14 +16414,26 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       }
     }
 
-    /* Landing reticle at the current lon/lat. */
-    const rx = cx, ry = cy - Math.sin(s.lat) * R;
-    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
-    ctx.lineWidth = 1.2;
-    ctx.beginPath(); ctx.arc(rx, ry, 7, 0, TAU); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(rx - 12, ry); ctx.lineTo(rx - 8, ry);
-    ctx.moveTo(rx + 8, ry); ctx.lineTo(rx + 12, ry); ctx.stroke();
+    /* Landing reticle while observing; you are the pin while inhabiting. */
+    if (!game.inhabiting) {
+      const rx = cx, ry = cy - Math.sin(s.lat) * R;
+      ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.arc(rx, ry, 7, 0, TAU); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(rx - 12, ry); ctx.lineTo(rx - 8, ry);
+      ctx.moveTo(rx + 8, ry); ctx.lineTo(rx + 12, ry); ctx.stroke();
+    }
+
     drawExtractorMarks(ctx, game, p, s, 'globe', { cx, cy, R });
+
+    if (game.inhabiting && game.body) {
+      const pinX = cx;
+      const pinY = cy + R * (0.30 - attention * 0.06);
+      drawUnderfootApron(ctx, game, p, s, pinX, pinY, R, attention);
+      drawAgentsOnGlobe(ctx, game, p, s, cx, cy, R);
+      const vscale = lerp(1.35, 0.72, attention);
+      drawVesselGlyph(ctx, game, pinX, pinY, vscale);
+    }
   }
 
   function extractorsOn(game, p) {
@@ -16263,30 +16472,6 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
         const X = view.cx + Math.sin(dlon) * view.R * Math.cos(lat);
         const Y = view.cy - Math.sin(lat) * view.R;
         ctx.font = '700 ' + Math.round(8 + m * 6) + 'px system-ui, sans-serif';
-        ctx.fillText(glyph, X, Y);
-      } else if (mode === 'sideon') {
-        const span = 0.09 + s.altitude * 0.9;
-        const dlon = wrap(lon - s.lon);
-        if (Math.abs(dlon) > span) continue;
-        const w = V().w;
-        const horizon = V().cy + px(0.35);
-        const X = (0.5 + dlon / (span * 2)) * w;
-        const elev = RS.planet.elevationDetailAt(p, lon, lat);
-        const base = RS.planet.elevationDetailAt(p, s.lon, s.lat);
-        const Y = horizon + (base - elev) * px(0.5) - (6 + m * 10);
-        ctx.font = '700 ' + Math.round(10 + m * 8) + 'px system-ui, sans-serif';
-        ctx.fillText(glyph, X, Y);
-      } else if (mode === 'freeroam') {
-        const w = V().w, h = V().h;
-        const span = 0.16 * (1 + s.altitude * 2.4);
-        const FW = RS.scenes.FREE_W, FH = RS.scenes.FREE_H;
-        const spanLat = span * (FH / FW);
-        const dlon = wrap(lon - s.lon);
-        const dlat = lat - s.lat;
-        if (Math.abs(dlon) > span || Math.abs(dlat) > spanLat) continue;
-        const X = w * 0.5 + (dlon / (span * 2)) * w;
-        const Y = h * 0.5 - (dlat / (spanLat * 2)) * h;
-        ctx.font = '700 ' + Math.round(11 + m * 7) + 'px system-ui, sans-serif';
         ctx.fillText(glyph, X, Y);
       }
     }
@@ -16761,15 +16946,127 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     ctx.stroke();
   }
 
-  function drawVesselGlyph(ctx, game, X, Y) {
+  function drawVesselSilhouette(ctx, arch, body, size, hue) {
+    const id = arch.id;
+    const phase = body.gaitPhase || body.strokePhase || 0;
+    const bank = body.bank || 0;
+    ctx.save();
+    ctx.rotate(bank * 0.35);
+    ctx.strokeStyle = hsl(hue, 0.85, 0.72, 1);
+    ctx.fillStyle = hsl(hue, 0.45, 0.82, 1);
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    if (id === 'walker' || id === 'harvester') {
+      const step = Math.sin(phase * TAU);
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.5, size * 0.2);
+      ctx.lineTo(0, -size * 0.5);
+      ctx.lineTo(size * 0.5, size * 0.2);
+      ctx.closePath();
+      ctx.fill();
+      const leg = size * 0.55 * (0.4 + step * 0.6);
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.35, size * 0.2); ctx.lineTo(-size * 0.35, size * 0.2 + leg);
+      ctx.moveTo(size * 0.35, size * 0.2); ctx.lineTo(size * 0.35, size * 0.2 - leg * 0.7);
+      ctx.stroke();
+    } else if (id === 'rover') {
+      ctx.fillRect(-size * 0.7, -size * 0.15, size * 1.4, size * 0.35);
+      ctx.beginPath();
+      ctx.arc(-size * 0.45, size * 0.25, size * 0.22, 0, TAU);
+      ctx.arc(size * 0.45, size * 0.25, size * 0.22, 0, TAU);
+      ctx.fill();
+    } else if (id === 'flier') {
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.9, size * 0.1);
+      ctx.lineTo(0, -size * 0.35);
+      ctx.lineTo(size * 0.9, size * 0.1);
+      ctx.lineTo(0, size * 0.15);
+      ctx.closePath();
+      ctx.fill();
+    } else if (id === 'lander') {
+      ctx.beginPath();
+      ctx.moveTo(0, -size * 0.55);
+      ctx.lineTo(-size * 0.45, size * 0.35);
+      ctx.lineTo(size * 0.45, size * 0.35);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.3, size * 0.35); ctx.lineTo(-size * 0.3, size * 0.65);
+      ctx.moveTo(size * 0.3, size * 0.35); ctx.lineTo(size * 0.3, size * 0.65);
+      ctx.stroke();
+    } else if (id === 'swimmer') {
+      const w = Math.sin(phase * TAU);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, size * 0.55, size * 0.28, 0, 0, TAU);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.5, 0);
+      ctx.quadraticCurveTo(-size * 0.9, -size * 0.5 * w, -size * 1.1, 0);
+      ctx.stroke();
+    } else if (id === 'ciliate') {
+      for (let i = 0; i < 6; i++) {
+        const ang = i * TAU / 6 + phase * 0.4;
+        const wob = Math.sin(phase * TAU + i) * size * 0.25;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(ang) * size * 0.2, Math.sin(ang) * size * 0.2);
+        ctx.lineTo(Math.cos(ang) * (size * 0.75 + wob), Math.sin(ang) * (size * 0.75 + wob));
+        ctx.stroke();
+      }
+      ctx.beginPath(); ctx.arc(0, 0, size * 0.22, 0, TAU); ctx.fill();
+    } else if (id === 'flucton') {
+      ctx.beginPath();
+      ctx.arc(-size * 0.28, 0, size * 0.22, 0, TAU);
+      ctx.arc(size * 0.28, 0, size * 0.22, 0, TAU);
+      ctx.fill();
+      ctx.strokeStyle = hsl(hue, 0.9, 0.7, 0.7);
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.06, 0); ctx.lineTo(size * 0.06, 0);
+      ctx.stroke();
+    } else if (id === 'courier' || id === 'probe') {
+      ctx.beginPath();
+      ctx.moveTo(size * 0.6, 0);
+      ctx.lineTo(-size * 0.35, -size * 0.35);
+      ctx.lineTo(-size * 0.15, 0);
+      ctx.lineTo(-size * 0.35, size * 0.35);
+      ctx.closePath();
+      ctx.fill();
+    } else if (id === 'symbiont') {
+      ctx.beginPath();
+      ctx.moveTo(0, -size * 0.65);
+      ctx.lineTo(size * 0.5, 0);
+      ctx.lineTo(0, size * 0.65);
+      ctx.lineTo(-size * 0.5, 0);
+      ctx.closePath();
+      ctx.fill();
+    } else if (id === 'weaver') {
+      ctx.beginPath();
+      for (let i = 0; i < 3; i++) {
+        const a = i * TAU / 3 - Math.PI / 2;
+        ctx.moveTo(0, 0);
+        ctx.lineTo(Math.cos(a) * size * 0.75, Math.sin(a) * size * 0.75);
+      }
+      ctx.stroke();
+    } else if (id === 'mote') {
+      ctx.beginPath(); ctx.arc(0, 0, size * 0.35, 0, TAU); ctx.fill();
+    } else {
+      ctx.font = '700 ' + Math.round(size * 1.4) + 'px system-ui, sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(arch.glyph, 0, 0);
+    }
+    ctx.restore();
+  }
+
+  function drawVesselGlyph(ctx, game, X, Y, scale) {
     const body = game.body;
     if (!body) return;
     const arch = RS.vessel.archOf(body);
-    const size = px(0.022);
+    const size = px(0.022) * (scale || 1);
 
     ctx.save();
-    ctx.translate(X, Y - size * 0.15);
-    ctx.rotate(Math.sin((game.scene.t || 0) * 60) * 0.02 + (body.heading || 0) * 0.06);
+    ctx.translate(X, Y);
+    ctx.rotate(body.heading || 0);
 
     const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, size * 3.2);
     glow.addColorStop(0, hsl(arch.hue, 0.8, 0.8, 0.5));
@@ -16777,24 +17074,28 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     ctx.fillStyle = glow;
     ctx.beginPath(); ctx.arc(0, 0, size * 3.2, 0, TAU); ctx.fill();
 
-    ctx.fillStyle = hsl(arch.hue, 0.5, 0.85, 1);
-    ctx.strokeStyle = hsl(arch.hue, 0.9, 0.7, 1);
-    ctx.lineWidth = 1.6;
-    ctx.font = '700 ' + Math.round(size * 1.6) + 'px system-ui, sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(arch.glyph, 0, 0);
+    drawVesselSilhouette(ctx, arch, body, size, arch.hue);
+
     ctx.restore();
 
     const cf = body.charge / arch.capacity;
     ctx.strokeStyle = hsl(cf > 0.25 ? 160 : 0, 0.85, 0.6, 0.8);
     ctx.lineWidth = 2.2;
     ctx.beginPath();
-    ctx.arc(X, Y - size * 0.15, size * 2.1, -Math.PI / 2, -Math.PI / 2 + TAU * clamp01(cf));
+    ctx.arc(X, Y, size * 2.1, -Math.PI / 2, -Math.PI / 2 + TAU * clamp01(cf));
+    ctx.stroke();
+
+    ctx.strokeStyle = hsl(arch.hue, 0.9, 0.75, 0.9);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(X, Y);
+    ctx.lineTo(X + Math.cos(body.heading || 0) * size * 2.8,
+      Y + Math.sin(body.heading || 0) * size * 2.8);
     ctx.stroke();
   }
 
   RS.worldrender = { drawSystem, drawPlanet, radiusMap, bodyScreen, atmosphereHue,
-    globeTexture, globeDisc, drawVesselGlyph, drawFreeroam,
+    globeTexture, globeDisc, drawVesselGlyph, attentionOf, globeProject,
     clearTextureCache() { texCache.clear(); discCanvas = null; discKey = ''; biomeColCache.clear(); hoodCanvas = null; hoodKey = ''; } };
 })(typeof window !== 'undefined' ? (window.RS = window.RS || {}) : (globalThis.RS = globalThis.RS || {}));
 
@@ -17426,14 +17727,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       }
       const ids = ['time', 'space', 'phase', 'frequency'];
       if (e.key === 'Tab') { kbIndex = (kbIndex + 1) % 4; e.preventDefault(); bus.emit('dial:jump', { dial: game.dials[ids[kbIndex]] }); return; }
-      if (e.key === 'c' || e.key === 'C') {
-        if (game.inhabiting && game.scene && game.scene.kind === 'planet' && RS.scenes.cycleCamera) {
-          e.preventDefault();
-          const r = RS.scenes.cycleCamera(game);
-          if (r.ok) bus.emit('scene:camera', { forceCam: r.forceCam, mode: r.mode });
-        }
-        return;
-      }
+      if (e.key === 'c' || e.key === 'C') return;
       const dial = game.dials[ids[kbIndex]];
       let d = 0;
       if (e.key === 'ArrowRight' || e.key === 'ArrowUp') d = 1;
@@ -17559,15 +17853,6 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     el['btn-menu'].addEventListener('click', () => toggleDrawer(game, bus, drawerOpen ? null : lastTab));
     el['btn-contact'].addEventListener('click', () => toggleDrawer(game, bus, 'contact'));
     el['btn-drawer-close'].addEventListener('click', () => closeDrawer());
-
-    /* Scene tag is the player-facing camera cycle while piloting a planet. */
-    if (el['scene-tag']) {
-      el['scene-tag'].addEventListener('click', () => {
-        if (!game.inhabiting || !game.scene || game.scene.kind !== 'planet') return;
-        const r = RS.scenes.cycleCamera(game);
-        if (r.ok) bus.emit('scene:camera', { forceCam: r.forceCam, mode: r.mode });
-      });
-    }
 
     el['drawer-tabs'].addEventListener('click', ev => {
       const t = ev.target.closest('[data-tab]');
@@ -17855,9 +18140,9 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     el['scene-tag'].style.color = game.inhabiting ? '#fca5a5' : '#7dd3fc';
     if (el['scene-tag']) {
       el['scene-tag'].title = (s.kind === 'planet' && game.inhabiting)
-        ? 'Tap or press C to cycle SIDE-ON / MAP / AUTO'
+        ? 'You are on the globe. Tap the ground to survey a seam.'
         : '';
-      el['scene-tag'].style.cursor = (s.kind === 'planet' && game.inhabiting) ? 'pointer' : 'default';
+      el['scene-tag'].style.cursor = 'default';
     }
 
     renderBodyBar(game);
@@ -19414,11 +19699,10 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       if (game.scene.kind === 'planet' && !game.flags.cameraHint) {
         game.flags.cameraHint = true;
         RS.ui.toast({
-          kind: 'info', icon: 'C', hue: 200, ms: 4200,
-          title: 'Two cameras, one ground',
-          body: 'C switches SIDE-ON and MAP; the ground is the same. Tap the ground to survey.'
+          kind: 'info', icon: '◎', hue: 200, ms: 4200,
+          title: 'On the globe',
+          body: 'You never leave the planet picture. Σ frames height. Tap the ground to survey.'
         });
-        if (RS.ui.pulseSceneTag) RS.ui.pulseSceneTag();
       }
     });
 
@@ -20153,8 +20437,8 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     const s = game.scene;
     if (!s) return { ok: false, reason: 'no scene' };
     if (mode === 'auto') { s.forceCam = null; return { ok: true, forceCam: null }; }
-    if (mode !== 'freeroam' && mode !== 'sideon' && mode !== 'globe') {
-      return { ok: false, reason: 'unknown camera' };
+    if (mode !== 'globe') {
+      return { ok: false, reason: 'only globe camera' };
     }
     s.forceCam = mode;
     return { ok: true, forceCam: mode };
@@ -20260,8 +20544,6 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
       btn('teleport', 'N pole', '0,88') +
       btn('teleport', 'S pole', '0,-88') +
       btn('teleport', 'Antimeridian', '179,10') +
-      btn('cam', 'Side-on', 'sideon') +
-      btn('cam', 'Freeroam', 'freeroam') +
       btn('cam', 'Globe', 'globe') +
       btn('cam', 'Cam auto', 'auto') +
       btn('dump-underfoot', 'Dump underfoot') +
@@ -20476,6 +20758,15 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
        * and the reason arriving in an atmosphere lands. */
       RS.audio.updateBed(game.scene.kind,
         game.scene.planet ? game.scene.planet.pressure : 0);
+
+      if (game.inhabiting && game.body && RS.audio.updateMachinery) {
+        const arch = RS.vessel.archOf(game.body);
+        const ctl = RS.vessel.controlsFrom(game);
+        const spd = Math.hypot(game.body.vx || 0, game.body.vy || 0, game.body.vz || 0);
+        RS.audio.updateMachinery(arch.id, ctl.rate, spd);
+      } else if (RS.audio.updateMachinery) {
+        RS.audio.updateMachinery('mote', 0, 0);
+      }
 
       const n = inField ? game.focusNode : null;
       RS.audio.updateRamp(n ? n.coherence : 0, n ? n.man.bandIndex : band.index, n);

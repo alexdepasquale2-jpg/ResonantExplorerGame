@@ -177,7 +177,7 @@
       reader: true
     },
     {
-      id: 'symbiont', name: 'Symbiont', glyph: '❋', hue: 340,
+      id: 'symbiont', name: 'Symbiont', glyph: '◈', hue: 340,
       blurb: 'No body of its own. Rides a living mind and leans on it — you influence, you do not command.',
       medium: [MEDIUM.SURFACE, MEDIUM.LIQUID, MEDIUM.GAS, MEDIUM.ORBIT],
       mass: 0.05, thrust: 0, dragC: 1, liftC: 0, grip: 0,
@@ -412,8 +412,28 @@
       mind: null, mindState: null, mindAddr: 0,
       /* Direct steering vector from the field drag gesture, if any. */
       steerX: 0, steerY: 0,
-      lastFire: 0
+      lastFire: 0,
+      gaitPhase: 0, strokePhase: 0, bank: 0, lastStep: 0
     };
+  }
+
+  function angleDiff(from, to) {
+    let d = to - from;
+    while (d > Math.PI) d -= TAU;
+    while (d < -Math.PI) d += TAU;
+    return d;
+  }
+
+  function turnRateOf(arch) {
+    switch (arch.id) {
+      case 'walker': return 5.2;
+      case 'rover': return 2.4;
+      case 'harvester': return 2.8;
+      case 'flier': return 3.6;
+      case 'swimmer': return 4.0;
+      case 'ciliate': return 6.5;
+      default: return 3.2 / Math.sqrt(arch.mass || 1);
+    }
   }
 
   function archOf(body) { return BY_ID[body.archId] || BY_ID.mote; }
@@ -457,32 +477,78 @@
     const authority = blocked ? 0.08 : 1;
 
     // --- thrust -----------------------------------------------------------
-    /* Heading comes from Δ, magnitude from τ, and the direct drag gesture adds
-     * on top — so a player can fly with dials alone, or grab the field and
-     * steer, or both. Neither is the "real" control scheme.
-     *
-     * On a planet surface, heading is a compass bearing: τ drives the tangent
-     * plane (east = vx, north = vz) and Σ is the vertical. Elsewhere the old
-     * mapping stands — heading's sine is still a vertical in liquids and gas
-     * because those media do not have a longitude to walk. */
+    /* Δ is facing; τ is gait/throttle; field drag yaws heading. On a planet
+     * surface each archetype expresses those differently — walker steps,
+     * rover coasts, flier banks. */
     const powered = body.charge > 0.5 ? 1 : 0.15;
     const accel = arch.thrust / arch.mass * authority * powered;
     const onPlanetSurface = env.medium === MEDIUM.SURFACE && game.scene && game.scene.kind === 'planet';
     let ax, ay, az = 0;
-    if (onPlanetSurface) {
+
+    if (onPlanetSurface && arch.id !== 'symbiont') {
+      const tr = turnRateOf(arch) * authority / Math.max(0.35, arch.grip);
+      const herr = angleDiff(body.heading, ctl.heading);
+      body.heading += clamp(herr, -tr * dt, tr * dt);
+      body.heading += (body.steerX * 2.8 + body.steerY * 0.4) * dt * authority;
+
+      let thrustMag = 0;
+      if (arch.id === 'walker' || arch.id === 'harvester') {
+        body.gaitPhase = (body.gaitPhase || 0) + dt * (1.4 + Math.abs(ctl.rate) * 3.2);
+        const step = Math.abs(ctl.rate) * Math.max(0, Math.sin(body.gaitPhase * TAU));
+        thrustMag = step * accel * (arch.id === 'harvester' ? 0.62 : 1);
+        if (step > 0.82 && body.gaitPhase - (body.lastStep || 0) > 0.45) {
+          body.lastStep = body.gaitPhase;
+          body.__footfall = 1;
+        }
+      } else if (arch.id === 'rover') {
+        thrustMag = ctl.rate * accel;
+        const steer = clamp(herr, -1, 1) * Math.min(1, Math.hypot(body.vx, body.vz) * 2.2);
+        body.heading += steer * dt * 2.8 * authority;
+      } else if (arch.id === 'lander') {
+        body.gaitPhase = (body.gaitPhase || 0) + dt * 9;
+        thrustMag = Math.abs(ctl.rate) * (Math.sin(body.gaitPhase * TAU) > 0.2 ? accel * 1.3 : 0);
+        ax = Math.cos(body.heading) * thrustMag * Math.sign(ctl.rate || 1);
+        az = Math.sin(body.heading) * thrustMag * Math.sign(ctl.rate || 1);
+      } else if (arch.id === 'flier') {
+        const spd = Math.hypot(body.vx, body.vz);
+        body.bank = damp(body.bank || 0, herr * Math.min(1, spd * 1.6), 7, dt);
+        body.heading += body.bank * dt * 2.4 * authority;
+        thrustMag = ctl.rate * accel * (spd < 0.06 && ctl.rate > 0 ? 0.15 : 1);
+      } else {
+        thrustMag = ctl.rate * accel;
+      }
+      if (arch.id !== 'lander') {
+        ax = Math.cos(body.heading) * thrustMag;
+        az = Math.sin(body.heading) * thrustMag;
+      }
+      ay = 0;
+    } else if (onPlanetSurface && arch.id === 'symbiont') {
+      body.heading = ctl.heading;
+      ax = 0; az = 0; ay = 0;
+    } else if (onPlanetSurface) {
       ax = Math.cos(ctl.heading) * ctl.rate * accel;
       az = Math.sin(ctl.heading) * ctl.rate * accel;
-      ax += body.steerX * accel; az += body.steerY * accel;
       ay = 0;
+    } else if (env.medium === MEDIUM.LIQUID && (arch.id === 'swimmer' || arch.id === 'ciliate')) {
+      body.strokePhase = (body.strokePhase || 0) + dt * (arch.id === 'ciliate' ? 14 : 5) * (0.3 + Math.abs(ctl.rate));
+      const asym = arch.id === 'ciliate'
+        ? Math.max(0, Math.sin(body.strokePhase * TAU))
+        : Math.max(0, Math.sin(body.strokePhase * TAU)) * (0.35 + Math.abs(ctl.rate));
+      body.heading += angleDiff(body.heading, ctl.heading) * dt * turnRateOf(arch) * authority;
+      body.heading += body.steerX * 2.2 * dt;
+      ax = Math.cos(body.heading) * asym * accel;
+      ay = Math.sin(body.heading) * asym * accel * 0.35;
     } else {
-      let tx = Math.cos(ctl.heading) * ctl.rate;
-      let ty = Math.sin(ctl.heading) * ctl.rate;
-      tx += body.steerX; ty += body.steerY;
+      body.heading += angleDiff(body.heading, ctl.heading) * dt * turnRateOf(arch) * authority * 0.7;
+      body.heading += body.steerX * 2.2 * dt;
+      let tx = Math.cos(body.heading) * ctl.rate;
+      let ty = Math.sin(body.heading) * ctl.rate;
+      tx += body.steerX * 0.35; ty += body.steerY * 0.35;
       const mag = Math.hypot(tx, ty);
       if (mag > 1) { tx /= mag; ty /= mag; }
       ax = tx * accel; ay = ty * accel;
     }
-    const tmag = Math.hypot(ctl.rate, body.steerX, body.steerY);
+    const tmag = Math.abs(ctl.rate) + Math.hypot(body.steerX, body.steerY) * 0.35;
 
     // --- gravity ----------------------------------------------------------
     /* On a surface, "down" is +y in scene space (the surface view is a side-on
@@ -577,6 +643,7 @@
       let grip = arch.grip;
       if (env.biomeId === 'ice') grip *= 0.22;
       else if (env.biomeId === 'desert' || env.biomeId === 'savanna') grip *= 0.72;
+      if (arch.id === 'rover' && Math.abs(ctl.rate) < 0.08) grip *= 0.18;
       const gf = Math.exp(-grip * 3.4 * dt);
       body.vx *= gf;
       body.vz *= gf;
@@ -585,18 +652,9 @@
     body.x += body.vx * dt;
     body.y += body.vy * dt;
 
-    /* Heading follows travel when moving, so the body visibly turns into its
-     * motion rather than sliding sideways. On a planet the travel vector is
-     * east/north, not east/up. */
     const sp = onPlanetSurface
       ? Math.hypot(body.vx, body.vz)
       : Math.hypot(body.vx, body.vy);
-    if (sp > 0.02) {
-      const want = onPlanetSurface ? Math.atan2(body.vz, body.vx) : Math.atan2(body.vy, body.vx);
-      body.heading = RS.core.turnToward
-        ? RS.core.turnToward(body.heading, want, dt * 6)
-        : want;
-    }
 
     // --- expenditure ------------------------------------------------------
     /* Charge drains with exertion and with hostility of the environment, and

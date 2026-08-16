@@ -433,7 +433,7 @@
             kind: 'explore' };
         }
         if (st && st.arch && st.arch.id === 'symbiont') {
-          return { text: 'The symbiont rides a mind here, or a civilisation from orbit. Tap the scene tag or C to change camera.',
+          return { text: 'The symbiont rides a mind here, or a civilisation from orbit.',
             kind: 'explore' };
         }
         return { text: 'Life here. Ride a mind with the symbiont — in orbit that is a civilisation — or turn Σ inward to enter a cell.',
@@ -443,7 +443,7 @@
         return { text: 'Seams below. Tap the ground to read them, or extract with the harvester.',
           kind: 'explore' };
       }
-      return { text: 'Walk it. Tap the ground to survey a seam. C or the scene tag switches SIDE-ON / MAP.', kind: 'pilot' };
+      return { text: 'Walk it on the globe. Tap the ground to survey a seam.', kind: 'pilot' };
     }
     return nextObjective(game);
   }

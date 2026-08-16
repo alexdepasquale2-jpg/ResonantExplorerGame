@@ -79,25 +79,20 @@ analytic where it buys scale, integrated where it buys feel.
 > **If you find yourself adding an array of world objects, stop.** Derive it
 > from its address instead. Everything in the game already does.
 
-### 2.2b Dual cameras on a planet, one heightfield
+### 2.2b One globe, two modes
 
-While inhabiting a planet the camera is a view of the same derived sphere, not
-a second world:
-
-- **Observing** → globe (baked 96×48 biome table, unchanged).
-- **Near the ground** → rich side-on slice (96-sample profile, multi-biome fill,
-  tide waterline, parallax far band).
-- **Altitude above ~0.22, or a camera toggle** → 48×32 freeroam
-  neighbourhood. Zoom opens the span; sample count does not. Toggle with
-  the scene tag or `C`. A tap on the ground is a world pulse (survey), not
-  a camera cycle.
+While on a planet the picture is always the **globe** (baked 96×48 biome table).
+Observing scrubs time and shows the landing reticle. Inhabiting pins you on the
+near side of the same disc: a 96-sample underfoot apron, vessel silhouette, and
+agents projected on the sphere. **Σ frames height of attention** (zoom and apron
+strength) — it does not swap cameras. Tap the ground is still survey/pulse.
 
 Pose is `(scene.lon, scene.lat, scene.altitude)`. Agents live in lon/lat.
 Saves still persist only those numbers. Debug HUD can teleport and dump the
 patch underfoot.
 
-Sample budgets are fixed: profile 96, freeroam 48×32, globe 96×48. Do not grow
-them with zoom. Cellular / system / galaxy / field / web / molecular / shells
+Sample budgets stay fixed: profile 96, globe 96×48, GLOBE_N 46 scanlines. Do not
+grow them with zoom. Cellular / system / galaxy / field / web / molecular / shells
 draw the vessel glyph and couple `body.x/y` to the local derived room. Foam
 stays embark-blocked.
 

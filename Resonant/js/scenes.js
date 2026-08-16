@@ -706,44 +706,23 @@
     return { w: FREE_W, h: FREE_H, css: s.__hoodCss, elev: s.__hoodElev, spanLon, spanLat };
   }
 
-  /* Dual-camera rule while inhabiting a planet:
-   *   observing            → globe
-   *   altitude / toggle    → freeroam neighbourhood
-   *   near the ground      → rich side-on slice
-   * Pose (lon, lat, altitude) is shared; switching never teleports. */
+  /* One planet picture: observing and inhabiting both use the globe. Σ frames
+   * height of attention on the same disc; altitude no longer swaps renderers. */
   function cameraMode(game) {
     const s = game.scene;
     if (!s || s.kind !== 'planet') return 'globe';
-    if (s.forceCam === 'freeroam' || s.forceCam === 'sideon' || s.forceCam === 'globe') {
-      return s.forceCam;
-    }
-    if (!game.inhabiting) return 'globe';
-    if (s.altitude > 0.22) return 'freeroam';
-    return 'sideon';
+    return 'globe';
   }
 
-  /* Player-facing cycle: AUTO → SIDE-ON → MAP → AUTO.
-   * Globe stays an observing / debug mode, not a walk cycle. */
+  /* Retired — inhabiting stays on the globe. Debug may still force globe. */
   function cycleCamera(game) {
-    const s = game.scene;
-    if (!s || s.kind !== 'planet' || !game.inhabiting) {
-      return { ok: false, reason: 'not piloting a planet' };
-    }
-    if (s.forceCam == null) s.forceCam = 'sideon';
-    else if (s.forceCam === 'sideon') s.forceCam = 'freeroam';
-    else s.forceCam = null;
-    return { ok: true, forceCam: s.forceCam, mode: cameraMode(game) };
+    return { ok: false, reason: 'inhabiting stays on the globe' };
   }
 
   function cameraLabel(game) {
     const s = game.scene;
-    if (!s || s.kind !== 'planet' || !game.inhabiting) {
-      return game.inhabiting ? 'PILOTING' : 'OBSERVING';
-    }
-    if (s.forceCam === 'freeroam') return 'MAP';
-    if (s.forceCam === 'sideon') return 'SIDE-ON';
-    if (s.forceCam === 'globe') return 'GLOBE';
-    return 'AUTO';
+    if (!s || s.kind !== 'planet') return game.inhabiting ? 'PILOTING' : 'OBSERVING';
+    return game.inhabiting ? 'ON GLOBE' : 'OBSERVING';
   }
 
   function tickPlanet(game, bus, dt) {
@@ -911,6 +890,12 @@
         bus.emit('vessel:blocked', { reason: r.blocked, arch: RS.vessel.archOf(body) });
       } else if (!r.blocked) {
         body.__warned = false;
+      }
+      if (body.__footfall) {
+        body.__footfall = 0;
+        const arch = RS.vessel.archOf(body);
+        if (RS.audio && RS.audio.footfall) RS.audio.footfall(arch.id);
+        if (RS.feel && RS.feel.FX && RS.feel.FX.footfall) RS.feel.FX.footfall(arch.hue);
       }
     }
 
