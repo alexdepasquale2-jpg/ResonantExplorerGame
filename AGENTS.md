@@ -14,7 +14,7 @@ authoritative developer guide.
 
 Standard commands (run from `Resonant/`):
 
-- Test: `node tools/simtest.js` — headless assertion suite (1650+ assertions,
+- Test: `node tools/simtest.js` — headless assertion suite (1750 assertions,
   runs against the real modules under a `window` shim; takes ~25s). It must be
   green before committing. There is no separate lint step; this suite is the
   gate.
