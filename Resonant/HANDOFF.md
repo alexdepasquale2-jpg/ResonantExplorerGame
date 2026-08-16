@@ -31,7 +31,7 @@ That one decision is why a 22-rung ladder of scopes costs almost nothing, why
 saves are ~2 kB, and why an alternative-physics universe is possible at all.
 
 ```bash
-node tools/simtest.js      # 1650 assertions — must be green before you commit
+node tools/simtest.js      # 1652 assertions — must be green before you commit
 node tools/build.mjs       # emits dist/resonant.html, one self-contained file
 python3 -m http.server 8000   # then open /Resonant/index.html
 ```
@@ -81,7 +81,7 @@ analytic where it buys scale, integrated where it buys feel.
 
 ### 2.3 The test suite is the specification
 
-`tools/simtest.js` is 1650 assertions and about half the value of this
+`tools/simtest.js` is 1652 assertions and about half the value of this
 repository. It runs headless in Node against the real modules (including
 `ui.js`, `audio.js` — the HTML builders are pure string functions).
 
@@ -263,7 +263,7 @@ What is still worth doing:
 ## 9. Verification checklist before you push
 
 ```bash
-node tools/simtest.js     # 1650+ assertions, zero failures
+node tools/simtest.js     # 1652+ assertions, zero failures
 node tools/build.mjs      # single file still builds
 ```
 

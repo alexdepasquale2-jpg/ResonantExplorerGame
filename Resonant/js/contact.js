@@ -838,6 +838,16 @@
     const s = game.scene;
     if (!s) return;
     const localKey = s.planet ? contactKey(s.planet) : null;
+    /* A contact that is not the world under you and has no relay is stale:
+     * you left, and nothing is carrying the channel. Clearing it here is
+     * what lets a relay take over once you are in another system. */
+    if (s.contact && s.contact.planet) {
+      const ck = contactKey(s.contact.planet);
+      if (ck !== localKey && !hasRelayKey(game, ck)) {
+        s.contact = null;
+        s.relayState = null;
+      }
+    }
     let best = null;
     for (const k in game.contacts) {
       if (k === localKey) continue;
@@ -853,7 +863,9 @@
         best = { planet, civ, lock };
       }
     }
-    if (s.contact || !best) return;
+    if (!best) return;
+    if (s.contact && !s.contact.relayed && localKey &&
+        contactKey(s.contact.planet) === localKey) return;
     const state = stateOf(game, best.planet, best.civ, best.lock);
     const prev = s.relayState;
     s.contact = { civ: best.civ, lock: best.lock, state, planet: best.planet, relayed: true };

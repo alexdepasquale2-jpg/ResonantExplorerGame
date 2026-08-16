@@ -1728,6 +1728,32 @@ const posOut = { x: 0, y: 0, z: 0, r: 0 };
     RS.save.writeNow(g2);
     const h = RS.save.hydrate(RS.save.readRaw());
     assert(RS.contact.probeOn(h, p), 'a stationed probe round-trips');
+
+    /* Leaving a system without a relay drops the channel; with one, tickRelays
+     * takes over instead of leaving a stale local contact stuck on the scene. */
+    const g3 = RS.game.newGame(12345);
+    g3.scene.planet = p;
+    g3.scene.contact = { planet: p, civ, lock: { total: 0.9 }, state: RS.contact.STATES.open, relayed: false };
+    g3.scene.planet = null;
+    RS.contact.tickRelays(g3, nullBus, 1 / 60);
+    assert(!g3.scene.contact, 'leaving without a relay drops the channel');
+
+    g2.scene.contact = { planet: p, civ, lock: { total: 0.9 }, state: RS.contact.STATES.open, relayed: false };
+    g2.scene.planet = null;
+    for (let i = 0; i < RS.dials.UPGRADE.range.max; i++) {
+      if (RS.dials.canUpgrade(g2.dials.frequency, 'range')) RS.dials.applyUpgrade(g2.dials.frequency, 'range');
+    }
+    for (let i = 0; i < RS.dials.UPGRADE.focus.max; i++) {
+      if (RS.dials.canUpgrade(g2.dials.frequency, 'focus')) RS.dials.applyUpgrade(g2.dials.frequency, 'focus');
+      if (RS.dials.canUpgrade(g2.dials.phase, 'focus')) RS.dials.applyUpgrade(g2.dials.phase, 'focus');
+    }
+    const car = RS.contact.carrierOf(g2, p, civ);
+    RS.dials.setValue(g2, g2.dials.frequency, car.phi);
+    RS.dials.setValue(g2, g2.dials.phase, car.phase);
+    RS.contact.recordOf(g2, p).awareness = 1;
+    RS.contact.tickRelays(g2, nullBus, 1 / 60);
+    assert(g2.scene.contact && g2.scene.contact.relayed,
+      'a stationed probe lets the channel follow you out of the system');
   }
 }
 

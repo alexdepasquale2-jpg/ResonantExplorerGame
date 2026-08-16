@@ -12,7 +12,7 @@ backend, no assets. Runs offline from `index.html`.
 
 ```
 python3 -m http.server 8000      # then open http://localhost:8000/index.html
-node tools/simtest.js            # 1650 headless assertions, no DOM
+node tools/simtest.js            # 1652 headless assertions, no DOM
 node tools/build.mjs             # -> dist/resonant.html, one self-contained file
 ```
 
@@ -822,7 +822,7 @@ revealed) and reads its dialogue off the rendered DOM.
 ## Status
 
 **Complete as designed.** Every phase of the plan this was built against has
-landed, and the invariants are held by 1650 assertions rather than by intention:
+landed, and the invariants are held by 1652 assertions rather than by intention:
 
 - All **22 rungs** have a scope of their own, every one reachable by turning Σ,
   none absorbed by a scope that is not about it.
