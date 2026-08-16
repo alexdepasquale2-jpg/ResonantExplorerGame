@@ -202,12 +202,19 @@
     if (game.flags && game.flags.huntEssence) {
       ess = RS.fractal.ESSENCE_BY_ID[game.flags.huntEssence];
     }
-    if (!ess) {
-      if (!RS.guide || !RS.guide.foresight) return null;
+    if (!ess && RS.guide && RS.guide.foresight) {
       const fs = RS.guide.foresight(game);
-      if (!fs || !fs.nearest) return null;
-      ess = fs.nearest;
+      if (fs && fs.nearest && RS.fractal.gnosisOf(game, fs.nearest.id) >= 2) ess = fs.nearest;
     }
+    if (!ess) {
+      for (let i = 0; i < RS.fractal.ESSENCES.length; i++) {
+        const e = RS.fractal.ESSENCES[i];
+        if (RS.fractal.gnosisOf(game, e.id) >= 2 && RS.fractal.huntPlaces(game, e.id).length) {
+          ess = e; break;
+        }
+      }
+    }
+    if (!ess) return null;
     const n = RS.fractal.gnosisOf(game, ess.id);
     if (n < 2) return null;
     const places = RS.fractal.huntPlaces(game, ess.id);

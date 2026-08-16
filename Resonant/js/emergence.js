@@ -8,7 +8,7 @@
  * (cosmos.js). A band declares which primitives are live (spectrum.js). A tier
  * declares how fast and how they are drawn.
  *
- *     64 authored numbers  ×  6 functions  =  1536 distinct situations
+ *     80 authored numbers  ×  6 functions  =  1920 distinct situations
  *
  * ── Why this and not twelve hand-written modes ────────────────────────────
  *

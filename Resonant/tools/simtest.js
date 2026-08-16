@@ -4819,9 +4819,11 @@ const posOut = { x: 0, y: 0, z: 0, r: 0 };
   assert(RS.fractal.attuneLevel(g, 'thicket') === beforeLv, 'insight does not raise attunement');
 
   const gF = RS.game.newGame(313);
+  for (let i = 0; i < 40; i++) RS.dials.applyUpgrade(gF.dials.space, 'range');
   RS.dials.setValue(gF, gF.dials.space, 0);
-  for (let i = 0; i < 20; i++) RS.scenes.tick(gF, nullBus, 1 / 60);
+  for (let i = 0; i < 30; i++) RS.scenes.tick(gF, nullBus, 1 / 60);
   assert(gF.scene.kind === 'foam', 'tests stand in the foam');
+  gF.vessels.unlocked.walker = true;
   const walk = RS.scenes.embark(gF, nullBus, 'walker');
   assert(!walk.ok && /persist/.test(walk.reason), 'walkers still cannot enter the foam');
   gF.vessels.unlocked.flucton = true;
